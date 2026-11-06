@@ -108,4 +108,27 @@ enum UIDemo {
         return Data(bytes)
     }
 }
+
+/// DEBUG `-uiDemoLandscape`: lays the app out at landscape size, rotated to fit the portrait
+/// window of a headless simulator (screenshots are rotated back afterwards).
+struct DemoRotator<Content: View>: View {
+    @ViewBuilder var content: Content
+    private var on: Bool { ProcessInfo.processInfo.arguments.contains("-uiDemoLandscape") }
+    var body: some View {
+        if on {
+            GeometryReader { geo in
+                let full = CGSize(width: geo.size.width + geo.safeAreaInsets.leading + geo.safeAreaInsets.trailing,
+                                  height: geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom)
+                content
+                    .environment(\.verticalSizeClass, UIDevice.current.userInterfaceIdiom == .phone ? .compact : .regular)
+                    .frame(width: full.height, height: full.width)
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: full.width, height: full.height)
+            }
+            .ignoresSafeArea()
+        } else {
+            content
+        }
+    }
+}
 #endif

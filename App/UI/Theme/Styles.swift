@@ -60,7 +60,7 @@ struct SectionHeader<Trailing: View>: View {
     }
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(title).sectionHeaderStyle()
+            Text(title).sectionHeaderStyle().fixedSize().layoutPriority(1)
             Spacer(minLength: 4)
             trailing
         }
@@ -229,5 +229,50 @@ struct FlatSegmented<Value: Hashable>: View {
         .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
             .strokeBorder(Theme.hairline, lineWidth: Theme.hairlineWidth))
         .fixedSize()
+    }
+}
+
+// MARK: - Fader
+
+/// Flat horizontal fader: hairline track, unity tick, small rectangular cap (no system capsule).
+struct FaderSlider: View {
+    @Binding var value: Double
+    var range: ClosedRange<Double>
+    var unity: Double? = 0
+    @Environment(\.isEnabled) private var isEnabled
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width - 12
+            let f = (value - range.lowerBound) / (range.upperBound - range.lowerBound)
+            ZStack(alignment: .leading) {
+                Capsule().fill(Theme.hairline).frame(height: 3).padding(.horizontal, 6)
+                Capsule().fill(Theme.textSecondary).frame(width: max(0, w * f), height: 3).padding(.leading, 6)
+                if let unity {
+                    let u = (unity - range.lowerBound) / (range.upperBound - range.lowerBound)
+                    Rectangle().fill(Theme.textTertiary).frame(width: 1, height: 12).offset(x: 6 + w * u)
+                }
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(Theme.surfaceRaised)
+                    .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(Theme.textSecondary, lineWidth: 1))
+                    .overlay(Rectangle().fill(Theme.textPrimary).frame(width: 1, height: 10))
+                    .frame(width: 12, height: 22)
+                    .offset(x: w * f)
+            }
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { g in
+                guard isEnabled else { return }
+                let x = min(max(0, g.location.x - 6), w)
+                value = range.lowerBound + Double(x / w) * (range.upperBound - range.lowerBound)
+            })
+            .opacity(isEnabled ? 1 : 0.45)
+        }
+        .frame(height: 28)
+        .accessibilityElement()
+        .accessibilityLabel("Gain")
+        .accessibilityValue(Fmt.dB(Float(value)))
+        .accessibilityAdjustableAction { dir in
+            value = min(range.upperBound, max(range.lowerBound, value + (dir == .increment ? 0.5 : -0.5)))
+        }
     }
 }

@@ -19,15 +19,9 @@ struct RootView: View {
     }
 
     var body: some View {
-        Group {
-            if UIDevice.current.userInterfaceIdiom == .pad {
-                PadRoot()
-            } else {
-                PhoneRoot()
-            }
-        }
+        rootContent
         .id(theme)
-        .tint(Theme.accent)
+        .tint(Theme.textPrimary)
         .background(Theme.background.ignoresSafeArea())
         .overlay(alignment: .top) { BannerView().padding(.top, 6) }
         .background(KeyCommands())
@@ -54,6 +48,17 @@ struct RootView: View {
             if let err { shell.banner = ShellBanner(kind: .error, text: err) }
         }
         .task { bootstrap() }
+    }
+
+    @ViewBuilder private var rootContent: some View {
+        let content = Group {
+            if UIDevice.current.userInterfaceIdiom == .pad { PadRoot() } else { PhoneRoot() }
+        }
+        #if DEBUG
+        DemoRotator { content }
+        #else
+        content
+        #endif
     }
 
     private func updateIdleTimer() {
@@ -98,20 +103,29 @@ private struct PadRoot: View {
     private var layout: LayoutMode { LayoutMode(rawValue: layoutRaw) ?? .console }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columns) {
-            CueListView()
-                .navigationTitle(shell.playlist?.name ?? "Cues")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbarTitleMenu { PlaylistMenuItems() }
-                .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 420)
-                .toolbarBackground(Theme.surface, for: .navigationBar)
-        } detail: {
-            detail
-                .inspector(isPresented: $shell.showInspector) { inspectorContent }
-        }
-        .navigationSplitViewStyle(.balanced)
-        .onChange(of: layoutRaw, initial: true) { _, _ in
-            columns = layout.showsSidebar ? .all : .detailOnly
+        if layout.showsSidebar {
+            NavigationSplitView(columnVisibility: $columns) {
+                CueListView()
+                    .navigationTitle(shell.playlist?.name ?? "Cues")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbarTitleMenu { PlaylistMenuItems() }
+                    .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 420)
+                    .toolbarBackground(Theme.surface, for: .navigationBar)
+            } detail: {
+                detail
+                    .inspector(isPresented: $shell.showInspector) { inspectorContent }
+            }
+            .navigationSplitViewStyle(.balanced)
+        } else {
+            // Clock, Mixer and Show carry their own cue display: no sidebar.
+            NavigationStack {
+                detail
+                    .navigationTitle(shell.playlist?.name ?? "")
+                    .toolbarTitleMenu { PlaylistMenuItems() }
+            }
+            .sheet(isPresented: $shell.showInspector) {
+                if let cue = shell.inspectorCue { CueInspector(cue: cue).presentationDetents([.large]) }
+            }
         }
     }
 
@@ -125,12 +139,6 @@ private struct PadRoot: View {
         default:
             ShowScreen(layout: layout == .clock ? .clock : (layout == .mixer ? .mixer : .console))
                 .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        if !layout.showsSidebar {
-                            Text(shell.playlist?.name ?? "").font(.headline).foregroundStyle(Theme.textPrimary)
-                                .fixedSize()
-                        }
-                    }
                     ToolbarItem(placement: .topBarTrailing) { LayoutSwitcher(layoutRaw: $layoutRaw) }
                     ShowToolbar()
                 }

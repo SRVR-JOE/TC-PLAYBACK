@@ -115,10 +115,9 @@ struct CueInspector: View {
             .frame(height: 38)
             HStack(spacing: 10) {
                 Text("Gain").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                Slider(value: Binding(get: { Double(max(cue.gainDB, -40)) },
-                                      set: { v in cue.gainDB = abs(v) < 0.25 ? 0 : Float((v * 2).rounded() / 2); routingChanged() }),
-                       in: -40...6)
-                    .tint(Theme.textSecondary)
+                FaderSlider(value: Binding(get: { Double(max(cue.gainDB, -40)) },
+                                           set: { v in cue.gainDB = abs(v) < 0.4 ? 0 : Float((v * 2).rounded() / 2); routingChanged() }),
+                            range: -40...6)
                 Text(Fmt.dB(cue.gainDB))
                     .font(Theme.numeric(13, weight: .regular))
                     .frame(width: 70, alignment: .trailing)

@@ -237,7 +237,7 @@ struct CueRow: View {
                     .fill(cue.colorHex.flatMap(Color.init(hexString:)) ?? .clear)
                     .frame(width: 3, height: 30)
                 CueNumberField(cue: cue, isEditing: isEditing)
-                    .frame(width: 46, alignment: .leading)
+                    .frame(width: 38, alignment: .leading)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(cue.title.isEmpty ? "Untitled" : cue.title)
@@ -245,8 +245,8 @@ struct CueRow: View {
                             .foregroundStyle(Theme.textPrimary)
                             .lineLimit(1)
                         Spacer(minLength: 4)
-                        Text(Fmt.duration(cue.displayDuration))
-                            .font(Theme.numeric(13, weight: .regular))
+                        Text(cue.displayDuration > 0 ? Fmt.duration(cue.displayDuration) : "Open")
+                            .font(cue.displayDuration > 0 ? Theme.numeric(13, weight: .regular) : Theme.caption)
                             .foregroundStyle(Theme.textSecondary)
                     }
                     detailLine
@@ -293,7 +293,7 @@ struct CueRow: View {
                     .font(Theme.caption)
                     .foregroundStyle(Theme.textTertiary)
             }
-            FollowGlyph(mode: cue.follow)
+            if cue.follow != .stop { FollowGlyph(mode: cue.follow) }
         }
     }
 

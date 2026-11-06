@@ -124,7 +124,7 @@ struct ChannelStrip: View {
         HStack(spacing: 5) {
             IndicatorLamp(color: Theme.stop, isOn: !enabled, size: 7)
             Text("Muted").font(Theme.caption)
-                .foregroundStyle(enabled ? Theme.textTertiary.opacity(0.6) : Theme.stop)
+                .foregroundStyle(enabled ? Theme.textTertiary.opacity(0.45) : Theme.stop)
         }
         .accessibilityHidden(enabled)
     }
@@ -239,10 +239,9 @@ struct GainRow: View {
         let a = RoutingActions(context: context, showLock: showLock)
         HStack(spacing: 10) {
             Text("Gain").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-            Slider(value: Binding(
+            FaderSlider(value: Binding(
                 get: { Double(max(a.routing.gainDB, -40)) },
-                set: { v in a.setGain(abs(v) < 0.25 ? 0 : Float((v * 2).rounded() / 2)) }), in: -40...6)
-            .tint(Theme.textSecondary)
+                set: { v in a.setGain(abs(v) < 0.4 ? 0 : Float((v * 2).rounded() / 2)) }), range: -40...6)
             .disabled(a.cue == nil || a.needsHold)
             Text(Fmt.dB(a.routing.gainDB))
                 .font(Theme.numeric(12, weight: .regular))

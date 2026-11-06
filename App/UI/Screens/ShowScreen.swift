@@ -46,16 +46,20 @@ struct ShowScreen: View {
     private var console: some View {
         GeometryReader { geo in
             let tall = geo.size.height > geo.size.width
+            let narrow = geo.size.width < 860
             VStack(spacing: 10) {
-                ClockPanel().frame(height: max(150, geo.size.height * (tall ? 0.24 : 0.27)))
+                ClockPanel().frame(height: max(150, geo.size.height * (tall ? 0.22 : 0.27)))
                 WaveformPanel(height: 64)
                 HStack(spacing: 10) {
                     ScopePanel(mode: $scopeMode).frame(maxWidth: .infinity)
-                    MeterPanel(axis: .vertical).frame(width: 104)
-                    RoutingPanel().panel().frame(width: tall ? 320 : 340)
+                    MeterPanel(axis: .vertical).frame(width: narrow ? 88 : 104)
+                    RoutingPanel()
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        .panel()
+                        .frame(width: min(340, geo.size.width * 0.44))
                 }
                 .frame(maxHeight: .infinity)
-                TransportBar(layout: .regular).panel(padding: 10)
+                TransportBar(layout: narrow ? .compact : .regular).panel(padding: 10)
             }
             .padding(12)
         }
@@ -72,11 +76,14 @@ struct ShowScreen: View {
                 WaveformPanel(height: 56, showsHeader: false)
                 HStack(spacing: 10) {
                     ScopePanel(mode: $scopeMode).frame(maxWidth: .infinity)
-                    RoutingPanel().panel().frame(width: min(400, geo.size.width * 0.36))
+                    RoutingPanel()
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        .panel()
+                        .frame(width: min(400, geo.size.width * 0.38))
                     MeterPanel(axis: .vertical).frame(width: 104)
                 }
                 .frame(maxHeight: .infinity)
-                TransportBar(layout: .regular).panel(padding: 10)
+                TransportBar(layout: geo.size.width < 860 ? .compact : .regular).panel(padding: 10)
             }
             .padding(12)
         }
@@ -88,7 +95,7 @@ struct ShowScreen: View {
         GeometryReader { geo in
             VStack(spacing: 10) {
                 HStack(spacing: 10) {
-                    MixerBank().frame(width: 292)
+                    MixerBank().frame(width: min(292, geo.size.width * 0.3))
                     VStack(spacing: 10) {
                         ClockPanel().frame(height: max(140, geo.size.height * 0.22))
                         WaveformPanel(height: 52)
@@ -100,13 +107,13 @@ struct ShowScreen: View {
                             .background(Theme.surface)
                         CueListView()
                     }
-                    .frame(width: min(340, geo.size.width * 0.3))
+                    .frame(width: min(340, geo.size.width * 0.28))
                     .clipShape(RoundedRectangle(cornerRadius: Theme.cornerLarge, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: Theme.cornerLarge, style: .continuous)
                         .strokeBorder(Theme.hairline, lineWidth: Theme.hairlineWidth))
                 }
                 .frame(maxHeight: .infinity)
-                TransportBar(layout: .regular).panel(padding: 10)
+                TransportBar(layout: geo.size.width < 860 ? .compact : .regular).panel(padding: 10)
             }
             .padding(12)
         }
@@ -382,7 +389,7 @@ struct ClockStatusLine: View {
                 Text(Self.lockWord(clock))
             }
             if let r = clock.rate { Text(r.operatorLabel).font(Theme.numeric(13, weight: .regular)) }
-            Text(Self.sourceWord(clock.source))
+            if clock.source != .trackTime { Text(Self.sourceWord(clock.source)) }
             if let l = clock.ltcLevelDBFS {
                 Text(String(format: "%.1f dBFS", l).replacingOccurrences(of: "-", with: "−"))
                     .font(Theme.numeric(13, weight: .regular))
