@@ -58,6 +58,20 @@ targets:
             CFBundleTypeRole: Viewer
             LSHandlerRank: Alternate
             LSItemContentTypes: [public.audio]
+          - CFBundleTypeName: TC Playback Show
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Owner
+            LSItemContentTypes: [com.pixelhaus.tcplayback.show]
+          - CFBundleTypeName: Zip
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.zip-archive]
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.pixelhaus.tcplayback.show
+            UTTypeDescription: TC Playback Show
+            UTTypeConformsTo: [public.zip-archive, public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [tcshow]
   TCPlaybackTests:
     type: bundle.unit-test
     platform: iOS
