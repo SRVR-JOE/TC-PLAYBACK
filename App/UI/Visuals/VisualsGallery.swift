@@ -14,6 +14,7 @@ struct VisualsGallery: View {
             switch page {
             case "clocks": ClockGalleryPage()
             case "scope": ScopeGalleryPage()
+            case "scope1": SingleScopePage()
             default: MainGalleryPage()
             }
         }
@@ -141,6 +142,20 @@ private struct ScopeGalleryPage: View {
                 Panel { OscilloscopeView(mode: $xy) }
                 Panel { StereoMeterView(showSource: true) }.frame(width: 104)
             }
+        }
+        .padding(12)
+        .visualsDataSource(demo)
+    }
+}
+
+/// One large scope; mode from -scopeMode overlay|stacked|xy|eye.
+private struct SingleScopePage: View {
+    @State private var demo = DemoVisualsDataSource()
+    @State private var mode = OscilloscopeView.Mode(rawValue: UserDefaults.standard.string(forKey: "scopeMode") ?? "") ?? .overlay
+    var body: some View {
+        VStack(spacing: 10) {
+            Panel { OscilloscopeView(mode: $mode) }
+            Panel { StereoMeterView(axis: .horizontal).frame(height: 40) }
         }
         .padding(12)
         .visualsDataSource(demo)

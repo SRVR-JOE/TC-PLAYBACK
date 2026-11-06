@@ -19,6 +19,9 @@ enum ScopeSlope { case rising, falling }
 /// Mutable per-view state the renderer updates every frame (kept out of SwiftUI state).
 final class ScopeModel {
     var gain: CGFloat = 1
+    /// Per-channel vertical gain for the time-domain modes (like separate V/div per channel).
+    var gainL: CGFloat = 1
+    var gainR: CGFloat = 1
     var phosphor: [(l: Path, r: Path)] = []
     var xyPhosphor: [Path] = []
     var eyePhosphor: [Path] = []
@@ -27,13 +30,17 @@ final class ScopeModel {
     var triggered = false
     var correlation: Double = 0
     var analysis: (l: LTCAnalysis, r: LTCAnalysis) = (LTCAnalysis(), LTCAnalysis())
-    var strip: [String] = ["", ""]
+    /// Measurement strip fields per channel: Vpp, RMS, frequency/bit rate, rise, DC.
+    var strip: [[String]] = [[], []]
     var stripAt: Double = 0
     var eyeText = ""
     // Trigger-level mapping from the last frame (for the drag handle).
     var trigMid: CGFloat = 0
     var trigScale: CGFloat = 1
     var levelVisibleUntil: Double = 0
+    /// Last timecode the scope decoded itself (a full frame is not in every buffer).
+    var decodedTC: String?
+    var decodedAt: Double = 0
 
     static let depth = 12
 
@@ -45,7 +52,7 @@ final class ScopeModel {
     /// Phosphor intensity for a sweep `age` frames old (0 = newest). Older sweeps are faint so
     /// only repeated hits build brightness.
     static func intensity(age: Int) -> Double {
-        age == 0 ? 1 : 0.26 * pow(0.84, Double(age - 1))
+        age == 0 ? 1 : 0.17 * pow(0.82, Double(age - 1))
     }
 
     var ltcChannel: SourceChannel? {
@@ -141,7 +148,7 @@ struct OscilloscopeContent: View {
             } label: {
                 HStack(spacing: 4) {
                     Text("Trig")
-                    Text(effectiveTriggerLabel).foregroundStyle(Theme.textPrimary)
+                    Text(effectiveTriggerLabel).foregroundStyle(VisualsColor.primary)
                 }
             }
             .buttonStyle(VisualsKeyStyle())
@@ -173,7 +180,7 @@ struct OscilloscopeContent: View {
                 .accessibilityLabel("Slower timebase")
             Text("\(timebaseText)/div")
                 .font(Theme.numeric(11))
-                .foregroundStyle(Theme.textPrimary)
+                .foregroundStyle(VisualsColor.primary)
                 .frame(minWidth: 72)
             Button { step(-1) } label: { Image(systemName: "plus").frame(width: 12) }
                 .buttonStyle(VisualsKeyStyle())
@@ -267,11 +274,20 @@ struct OscilloscopeContent: View {
     }
 
     private func render(_ gc: GraphicsContext, _ size: CGSize, now: Double) {
+        #if DEBUG
+        let probeStart = CACurrentMediaTime()
+        #endif
         let snap = running ? data.snapshot() : (model.frozen ?? data.snapshot())
         if running {
             let hint = data.clock.rate
             model.analysis = (LTCAnalysis.analyze(snap.scopeL, sampleRate: snap.sampleRate, rateHint: hint),
                               LTCAnalysis.analyze(snap.scopeR, sampleRate: snap.sampleRate, rateHint: hint))
+            if let ch = model.ltcChannel,
+               let tc = (ch == .left ? model.analysis.l : model.analysis.r).timecodeText {
+                model.decodedTC = tc; model.decodedAt = now
+            } else if now - model.decodedAt > 0.5 {
+                model.decodedTC = nil
+            }
             let has = model.ltcChannel != nil
             if has != hasLTC { DispatchQueue.main.async { hasLTC = has } }
             if now - model.stripAt > 0.25 { updateStrip(snap); model.stripAt = now }
@@ -307,6 +323,9 @@ struct OscilloscopeContent: View {
             gc.draw(Text("Stopped").font(Theme.caption.weight(.semibold)).foregroundStyle(Theme.stop),
                     at: CGPoint(x: plot.maxX - 4, y: plot.minY + 9), anchor: .trailing)
         }
+        #if DEBUG
+        ScopeFrameProbe.shared.record(CACurrentMediaTime() - probeStart, mode: mode)
+        #endif
     }
 
     // MARK: Time domain
@@ -333,12 +352,17 @@ struct OscilloscopeContent: View {
         let s0 = start.map { $0 - pre } ?? (n - window)
 
         if running {
-            var peak: Float = 0.001
-            for i in s0..<(s0 + window) { peak = max(peak, abs(l[i]), abs(r[i])) }
-            let target: CGFloat = autoGain ? min(40, 0.8 / CGFloat(peak)) : 1
-            model.gain += (target - model.gain) * (abs(target - model.gain) > model.gain ? 1 : 0.15)
-            let pl = trace(l, s0, window, plot.minX, plot.width, midL, half)
-            let pr = trace(r, s0, window, plot.minX, plot.width, midR, half)
+            var pkL: Float = 0.001, pkR: Float = 0.001
+            for i in s0..<(s0 + window) { pkL = max(pkL, abs(l[i])); pkR = max(pkR, abs(r[i])) }
+            func settle(_ g: inout CGFloat, _ peak: Float) {
+                let target: CGFloat = autoGain ? min(40, 0.8 / CGFloat(peak)) : 1
+                // Snap down at once when the signal would clip the lane; ease otherwise.
+                g += (target - g) * (target < g * 0.8 ? 1 : 0.06)
+            }
+            settle(&model.gainL, pkL)
+            settle(&model.gainR, pkR)
+            let pl = trace(l, s0, window, plot.minX, plot.width, midL, half, gain: model.gainL)
+            let pr = trace(r, s0, window, plot.minX, plot.width, midR, half, gain: model.gainR)
             model.push((pl, pr), into: &model.phosphor)
         }
 
@@ -357,8 +381,11 @@ struct OscilloscopeContent: View {
         laneLabel(gc, "R", stacked ? CGPoint(x: plot.minX + 6, y: plot.midY + 9) : CGPoint(x: plot.minX + 18, y: plot.minY + 9), Self.traceR)
 
         // Vertical sensitivity, top-centre-right.
-        let perDiv = 1 / (model.gain * (stacked ? 2 : 4))
-        gc.draw(Text(String(format: "%.3g FS/div", perDiv)).font(Self.mono9).foregroundStyle(Theme.textTertiary),
+        func perDiv(_ g: CGFloat) -> String {
+            let v = 1 / (g * (stacked ? 2 : 4))
+            return v >= 0.1 ? String(format: "%.2f", v) : String(format: "%.3f", v)
+        }
+        gc.draw(Text("L \(perDiv(model.gainL))  R \(perDiv(model.gainR)) FS/div").font(Self.mono9).foregroundStyle(Theme.textTertiary),
                 at: CGPoint(x: plot.maxX - 4, y: plot.minY + (running ? 9 : 22)), anchor: .trailing)
 
         // Trigger position marker (top) and level handle (right edge).
@@ -370,8 +397,9 @@ struct OscilloscopeContent: View {
 
         let tmid = trigCh == .left ? midL : midR
         model.trigMid = tmid
-        model.trigScale = half * model.gain
-        let ty = max(plot.minY, min(plot.maxY, tmid - CGFloat(level) * half * model.gain))
+        let tg = trigCh == .left ? model.gainL : model.gainR
+        model.trigScale = half * tg
+        let ty = max(plot.minY, min(plot.maxY, tmid - CGFloat(level) * half * tg))
         let tc = trigCh == .left ? Self.traceL : Self.traceR
         var a = Path()
         a.move(to: CGPoint(x: plot.maxX + 9, y: ty - 4.5)); a.addLine(to: CGPoint(x: plot.maxX + 9, y: ty + 4.5))
@@ -434,8 +462,9 @@ struct OscilloscopeContent: View {
             layer.stroke(ticks, with: .color(Theme.textTertiary), lineWidth: 0.5)
         }
         // Timecode box at the right.
-        let tcText = a.timecodeText ?? (a.isReverse ? "Reverse" : "--:--:--:--")
-        let label = gc.resolve(Text(tcText).font(Self.mono10).foregroundStyle(a.timecodeText != nil ? color : Theme.textSecondary))
+        let tc = a.timecodeText ?? model.decodedTC
+        let tcText = tc ?? (a.isReverse ? "Reverse" : "--:--:--:--")
+        let label = gc.resolve(Text(tcText).font(Self.mono10).foregroundStyle(tc != nil ? color : Theme.textSecondary))
         let ls = label.measure(in: CGSize(width: 200, height: 20))
         let box = CGRect(x: row.maxX - ls.width - 10, y: row.minY, width: ls.width + 10, height: row.height)
         gc.fill(Path(box), with: .color(Theme.surfaceSunken))
@@ -478,9 +507,9 @@ struct OscilloscopeContent: View {
 
     /// Polyline of `count` samples from `start`; min/max per column when denser than the pixels.
     private func trace(_ s: [Float], _ start: Int, _ count: Int, _ x0: CGFloat, _ w: CGFloat,
-                       _ mid: CGFloat, _ half: CGFloat) -> Path {
+                       _ mid: CGFloat, _ half: CGFloat, gain: CGFloat) -> Path {
         var p = Path()
-        let g = model.gain * half
+        let g = gain * half
         func y(_ v: Float) -> CGFloat { max(mid - half * 1.05, min(mid + half * 1.05, mid - CGFloat(v) * g)) }
         let columns = Int(w)
         if count <= columns * 2 {
@@ -538,19 +567,20 @@ struct OscilloscopeContent: View {
         for (i, s) in [snap.scopeL, snap.scopeR].enumerated() {
             let m = ChannelMeasurement.measure(s, sampleRate: snap.sampleRate)
             let a = i == 0 ? model.analysis.l : model.analysis.r
-            var parts = [i == 0 ? "L" : "R",
-                         "Vpp " + VisualsFormat.db(m.vppDBFS) + " dBFS",
+            var parts = ["Vpp " + VisualsFormat.db(m.vppDBFS) + " dBFS",
                          "RMS " + VisualsFormat.db(m.rmsDBFS)]
             if a.isLTC {
                 parts.append(String(format: "%.0f bit/s", snap.sampleRate / a.bitPeriod))
-                if let rt = a.riseTime { parts.append(String(format: "Rise %.0f µs", rt * 1e6)) }
+                parts.append(a.riseTime.map { String(format: "Rise %.0f µs", $0 * 1e6) } ?? "")
             } else if let f = m.frequency, m.vppDBFS > -60 {
                 parts.append(f >= 1000 ? String(format: "%.2f kHz", f / 1000) : String(format: "%.0f Hz", f))
+                parts.append("")
             } else {
                 parts.append("\u{2014} Hz")
+                parts.append("")
             }
             parts.append(String(format: "DC %@%.1f %%", m.dc < 0 ? VisualsFormat.minus : "+", abs(m.dc) * 100))
-            model.strip[i] = parts.joined(separator: "   ")
+            model.strip[i] = parts
         }
         if let ch = model.ltcChannel {
             let a = ch == .left ? model.analysis.l : model.analysis.r
@@ -568,9 +598,34 @@ struct OscilloscopeContent: View {
         var top = Path()
         top.move(to: CGPoint(x: 0, y: r.minY - 1)); top.addLine(to: CGPoint(x: r.maxX + 20, y: r.minY - 1))
         gc.stroke(top, with: .color(Theme.hairline), lineWidth: 0.5)
+        // Aligned columns; drop DC, then rise time, when the strip is too narrow.
+        let colors = [Self.traceL, Self.traceR]
+        let rows = model.strip
+        guard rows.allSatisfy({ $0.count == 5 }) else { return }
+        var resolved: [[GraphicsContext.ResolvedText]] = []
+        var widths = [CGFloat](repeating: 0, count: 5)
+        for (i, row) in rows.enumerated() {
+            var line: [GraphicsContext.ResolvedText] = []
+            for (c, f) in row.enumerated() {
+                let t = gc.resolve(Text(f).font(Self.mono10).foregroundStyle(colors[i]))
+                widths[c] = max(widths[c], t.measure(in: CGSize(width: 300, height: 20)).width)
+                line.append(t)
+            }
+            resolved.append(line)
+        }
+        let labelW: CGFloat = 16, gap: CGFloat = 12
+        var columns = [0, 1, 2, 3, 4].filter { widths[$0] > 0 }
+        func total(_ cols: [Int]) -> CGFloat { labelW + cols.reduce(0) { $0 + widths[$1] } + gap * CGFloat(cols.count - 1) }
+        for drop in [4, 3] where total(columns) > r.width - 6 { columns.removeAll { $0 == drop } }
         for i in 0..<2 {
-            gc.draw(Text(model.strip[i]).font(Self.mono10).foregroundStyle(i == 0 ? Self.traceL : Self.traceR),
-                    at: CGPoint(x: r.minX, y: r.minY + 7 + CGFloat(i) * 13), anchor: .leading)
+            let y = r.minY + 7 + CGFloat(i) * 13
+            gc.draw(Text(i == 0 ? "L" : "R").font(.system(size: 10, weight: .semibold)).foregroundStyle(colors[i]),
+                    at: CGPoint(x: r.minX, y: y), anchor: .leading)
+            var x = r.minX + labelW
+            for c in columns {
+                gc.draw(resolved[i][c], at: CGPoint(x: x, y: y), anchor: .leading)
+                x += widths[c] + gap
+            }
         }
     }
 
@@ -705,10 +760,9 @@ struct OscilloscopeContent: View {
             gc.draw(Text(label).font(Self.mono9).foregroundStyle(Theme.textTertiary),
                     at: CGPoint(x: x(u) + 3, y: plot.maxY - 7), anchor: .leading)
         }
+        laneLabel(gc, ch == .left ? "L" : "R", CGPoint(x: plot.minX + 6, y: plot.minY + 9), color)
         gc.draw(Text(model.eyeText).font(Self.mono10).foregroundStyle(color),
-                at: CGPoint(x: plot.minX + 6, y: plot.minY + 9), anchor: .leading)
-        gc.draw(Text(ch == .left ? "LTC \u{00B7} Left" : "LTC \u{00B7} Right").font(Theme.caption).foregroundStyle(Theme.textSecondary),
-                at: CGPoint(x: plot.maxX - 4, y: plot.minY + (running ? 9 : 22)), anchor: .trailing)
+                at: CGPoint(x: plot.minX + 20, y: plot.minY + 9), anchor: .leading)
     }
 }
 
@@ -722,7 +776,29 @@ struct SlopeGlyph: View {
             let lo = rising ? h - 1 : 1, hi = rising ? 1 : h - 1
             p.move(to: CGPoint(x: 0, y: lo)); p.addLine(to: CGPoint(x: w * 0.4, y: lo))
             p.addLine(to: CGPoint(x: w * 0.6, y: hi)); p.addLine(to: CGPoint(x: w, y: hi))
-            gc.stroke(p, with: .color(Theme.textPrimary), lineWidth: 1.2)
+            gc.stroke(p, with: .color(VisualsColor.primary), lineWidth: 1.2)
         }
     }
 }
+
+#if DEBUG
+/// Debug-only: prints mean / max CPU time of the scope's render closure every 2 s when the app is
+/// launched with -scopeProbe (used to check the 60 fps budget; Canvas encoding cost only).
+final class ScopeFrameProbe {
+    static let shared = ScopeFrameProbe()
+    private let enabled = UserDefaults.standard.bool(forKey: "scopeProbe")
+    private var sum = 0.0, peak = 0.0, count = 0, since = CACurrentMediaTime()
+    func record(_ dt: Double, mode: OscilloscopeView.Mode) {
+        guard enabled else { return }
+        sum += dt; peak = max(peak, dt); count += 1
+        let now = CACurrentMediaTime()
+        guard now - since > 2 else { return }
+        let line = String(format: "scope %@: %d frames/%.1fs, mean %.2f ms, max %.2f ms\n", mode.rawValue, count, now - since, sum / Double(count) * 1000, peak * 1000)
+        print(line, terminator: "")
+        let url = URL.temporaryDirectory.appending(path: "scope-probe.txt")
+        if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
+        else { try? Data(line.utf8).write(to: url) }
+        sum = 0; peak = 0; count = 0; since = now
+    }
+}
+#endif

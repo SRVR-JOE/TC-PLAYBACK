@@ -191,7 +191,6 @@ struct ClockFontMetrics {
     let capHeight: CGFloat, ascender: CGFloat, lineHeight: CGFloat
     private let base: UIFont
     private static var cache: [ClockStyle: ClockFontMetrics] = [:]
-    private var widths: [String: CGFloat] = [:]
 
     static func metrics(for style: ClockStyle) -> ClockFontMetrics {
         if let m = cache[style] { return m }
@@ -243,12 +242,23 @@ struct ClockStatusLine: View {
         ViewThatFits(in: .horizontal) {
             line(level: true, source: true, extras: true)
             line(level: true, source: true, extras: false)
-            line(level: true, source: false, extras: false)
-            line(level: false, source: false, extras: false)
+            // Narrow (iPhone): keep the LTC level readable on a second row.
+            VStack(alignment: .leading, spacing: 6) {
+                line(level: false, source: true, extras: false)
+                healthRow(reverseWord: true)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                line(level: false, source: false, extras: false)
+                healthRow(reverseWord: true)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                line(level: false, source: false, extras: false)
+                healthRow(reverseWord: false)
+            }
             HStack(spacing: 10) { ClockStateBadge(state: state); Spacer(minLength: 0) }
         }
         .font(Theme.label)
-        .foregroundStyle(Theme.textSecondary)
+        .foregroundStyle(VisualsColor.secondary)
         .lineLimit(1)
     }
 
@@ -256,13 +266,13 @@ struct ClockStatusLine: View {
     private func line(level: Bool, source: Bool, extras: Bool) -> some View {
         HStack(spacing: 10) {
             ClockStateBadge(state: state)
-            if let r = clock.rate, state != .trackTime {
+            if let r = clock.rate, state != .trackTime, state != .noTimecode {
                 divider
                 HStack(spacing: 3) {
                     Text(VisualsFormat.rate(r)).font(Theme.numeric(13))
                     if VisualsFormat.rateNeedsUnit(r) { Text("fps") }
                 }
-                .foregroundStyle(Theme.textPrimary)
+                .foregroundStyle(VisualsColor.primary)
             }
             if source {
                 divider
@@ -272,7 +282,7 @@ struct ClockStatusLine: View {
                 divider
                 LTCLevelReadout(levelDBFS: db)
             }
-            if clock.isReverse, state != .noTimecode {
+            if level, clock.isReverse, state != .noTimecode {
                 divider
                 Label("Reverse", systemImage: "backward")
                     .labelStyle(.titleAndIcon)
@@ -286,7 +296,7 @@ struct ClockStatusLine: View {
             if let elapsed {
                 Text(VisualsFormat.time(elapsed))
                     .font(Theme.numeric(13))
-                    .foregroundStyle(Theme.textPrimary)
+                    .foregroundStyle(VisualsColor.primary)
                     .accessibilityLabel("Elapsed \(VisualsFormat.time(elapsed))")
             }
             if let remaining {
@@ -297,8 +307,29 @@ struct ClockStatusLine: View {
         }
     }
 
+    /// Second row on narrow widths: LTC level first (crews lose lock on level), then direction
+    /// and dropouts. `reverseWord: false` keeps only the reverse glyph when space is tight.
+    @ViewBuilder
+    private func healthRow(reverseWord: Bool) -> some View {
+        if isLTC, state != .noTimecode {
+            HStack(spacing: 10) {
+                if let db = clock.ltcLevelDBFS { LTCLevelReadout(levelDBFS: db) }
+                if clock.isReverse {
+                    if reverseWord {
+                        Label("Reverse", systemImage: "backward").foregroundStyle(Theme.lockWarn)
+                    } else {
+                        Image(systemName: "backward").foregroundStyle(Theme.lockWarn)
+                            .accessibilityLabel("Reverse")
+                    }
+                }
+                Spacer(minLength: 8)
+                DropoutCounter(count: clock.discontinuities)
+            }
+        }
+    }
+
     private var divider: some View {
-        Rectangle().fill(Theme.hairline).frame(width: 1, height: 12)
+        Rectangle().fill(VisualsColor.hairline).frame(width: 1, height: 12)
     }
 }
 
@@ -310,7 +341,7 @@ struct ClockStateBadge: View {
             IndicatorLamp(color: state.lampColor ?? Theme.lockOff, isOn: state.lampColor != nil, size: 9)
             Text(state.word)
                 .font(Theme.label)
-                .foregroundStyle(state == .lost ? Theme.stop : Theme.textPrimary)
+                .foregroundStyle(state == .lost ? Theme.stop : VisualsColor.primary)
         }
         .accessibilityElement(children: .combine)
     }
@@ -326,7 +357,7 @@ struct LTCLevelReadout: View {
             LTCLevelGauge(levelDBFS: levelDBFS)
             HStack(spacing: 3) {
                 Text(VisualsFormat.db(levelDBFS)).font(Theme.numeric(13))
-                    .foregroundStyle(warn ? Theme.lockWarn : Theme.textPrimary)
+                    .foregroundStyle(warn ? Theme.lockWarn : VisualsColor.primary)
                 Text("dBFS")
             }
             if let w = band.word {
@@ -365,7 +396,7 @@ struct DropoutCounter: View {
         HStack(spacing: 4) {
             Text("Dropouts")
             Text("\(count)").font(Theme.numeric(13))
-                .foregroundStyle(count > 0 ? Theme.lockWarn : Theme.textPrimary)
+                .foregroundStyle(count > 0 ? Theme.lockWarn : VisualsColor.primary)
         }
         .accessibilityElement(children: .combine)
     }
@@ -381,13 +412,13 @@ struct LTCHealthView: View {
             if let db = c.ltcLevelDBFS, c.lock != .noSignal {
                 LTCLevelReadout(levelDBFS: db)
             } else {
-                Text("No timecode").foregroundStyle(Theme.textTertiary)
+                Text("No timecode").foregroundStyle(VisualsColor.tertiary)
             }
-            Rectangle().fill(Theme.hairline).frame(width: 1, height: 12)
+            Rectangle().fill(VisualsColor.hairline).frame(width: 1, height: 12)
             DropoutCounter(count: c.discontinuities)
         }
         .font(Theme.label)
-        .foregroundStyle(Theme.textSecondary)
+        .foregroundStyle(VisualsColor.secondary)
         .lineLimit(1)
     }
 }

@@ -81,17 +81,33 @@ struct VisualsKeyStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(Theme.caption.weight(.medium))
-            .foregroundStyle(isOn ? Theme.textPrimary : Theme.textSecondary)
+            .foregroundStyle(isOn ? VisualsColor.primary : VisualsColor.secondary)
             .padding(.horizontal, 7)
             .frame(minHeight: 24)
             .background(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(configuration.isPressed ? Theme.hairline : Theme.surfaceRaised)
+                    .fill(configuration.isPressed ? VisualsColor.pressed : VisualsColor.raised)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .strokeBorder(Theme.hairline, lineWidth: 1)
+                    .strokeBorder(VisualsColor.hairline, lineWidth: 1)
             )
             .contentShape(Rectangle())
     }
+}
+
+/// Text/chrome colours for anything the visuals draw on the HOST surface (status line, meter
+/// scale, scope controls). Theme is dark-only today; these follow light/dark. Instrument wells
+/// (scope screen, meter bars, waveform) stay dark in both modes and keep using Theme directly.
+/// If the shell makes Theme adaptive, these can collapse back onto it.
+enum VisualsColor {
+    static func dynamic(_ dark: Color, light: UInt32) -> Color {
+        Color(uiColor: UIColor { $0.userInterfaceStyle == .light ? UIColor(Color(hex: light)) : UIColor(dark) })
+    }
+    static let primary = dynamic(Theme.textPrimary, light: 0x16181B)
+    static let secondary = dynamic(Theme.textSecondary, light: 0x5A6068)
+    static let tertiary = dynamic(Theme.textTertiary, light: 0x8C9199)
+    static let hairline = dynamic(Theme.hairline, light: 0xD2D5DA)
+    static let raised = dynamic(Theme.surfaceRaised, light: 0xFFFFFF)
+    static let pressed = dynamic(Theme.hairline, light: 0xE4E6EA)
 }
