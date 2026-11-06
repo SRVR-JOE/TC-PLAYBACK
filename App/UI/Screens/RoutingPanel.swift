@@ -5,7 +5,7 @@ import SwiftData
 enum ChannelContent: Equatable {
     case music, timecode, generator, none
     var label: String {
-        switch self { case .music: "Music"; case .timecode: "Timecode"; case .generator: "Generator"; case .none: "No signal" }
+        switch self { case .music: "Music"; case .timecode: "Timecode"; case .generator: "Generator"; case .none: "—" }
     }
 }
 

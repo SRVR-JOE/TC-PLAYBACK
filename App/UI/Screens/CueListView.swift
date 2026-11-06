@@ -388,6 +388,18 @@ private struct EmptyCueList: View {
     @Environment(\.modelContext) private var context
     @Bindable private var shell = ShellModel.shared
     @AppStorage(SettingsKey.showLock) private var showLock = false
+    private var importButton: some View {
+        Button { shell.showImporter = true } label: {
+            Label("Import audio", systemImage: "square.and.arrow.down").fixedSize()
+        }
+        .buttonStyle(OutlineButtonStyle(prominent: true))
+    }
+    private var generatorButton: some View {
+        Button { shell.addGeneratorCue(context: context) } label: {
+            Label("Add generator cue", systemImage: "clock").fixedSize()
+        }
+        .buttonStyle(OutlineButtonStyle())
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("No cues yet")
@@ -397,21 +409,15 @@ private struct EmptyCueList: View {
                 .font(Theme.label.weight(.regular))
                 .foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 10) {
-                Button { shell.showImporter = true } label: {
-                    Label("Import audio", systemImage: "square.and.arrow.down")
-                }
-                .buttonStyle(OutlineButtonStyle(prominent: true))
-                Button { shell.addGeneratorCue(context: context) } label: {
-                    Label("Add generator cue", systemImage: "clock")
-                }
-                .buttonStyle(OutlineButtonStyle())
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { importButton; generatorButton }
+                VStack(alignment: .leading, spacing: 10) { importButton; generatorButton }
             }
             .padding(.top, 4)
             .disabled(showLock)
         }
         .padding(24)
-        .frame(maxWidth: 420, maxHeight: .infinity, alignment: .center)
+        .frame(maxWidth: 460, maxHeight: .infinity, alignment: .center)
         .frame(maxWidth: .infinity)
     }
 }
