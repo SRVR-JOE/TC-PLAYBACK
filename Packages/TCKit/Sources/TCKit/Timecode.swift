@@ -71,9 +71,12 @@ public struct Timecode: Hashable, Codable, Sendable, CustomStringConvertible {
 
     /// Parse "HH:MM:SS:FF" / "HH:MM:SS;FF" / "HHMMSSFF". Returns nil if malformed or out of range.
     public init?(string: String, rate: FrameRate) {
-        let digits = string.filter(\.isNumber)
-        guard digits.count == 8 else { return nil }
-        let a = Array(digits).map { Int(String($0))! }
+        // ASCII digits only: `Character.isNumber` also accepts "²", "½", Arabic-Indic digits etc.,
+        // which would previously crash the force-unwrap below.
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.allSatisfy({ ($0.isASCII && $0.isNumber) || $0 == ":" || $0 == ";" || $0 == "." || $0 == " " }) else { return nil }
+        let a = trimmed.compactMap { $0.isASCII ? $0.wholeNumberValue : nil }
+        guard a.count == 8 else { return nil }
         let h = a[0] * 10 + a[1], m = a[2] * 10 + a[3], s = a[4] * 10 + a[5], f = a[6] * 10 + a[7]
         guard h < 24, m < 60, s < 60, f < rate.nominalFPS else { return nil }
         if rate.isDropFrame, s == 0, f < 2, m % 10 != 0 { return nil }
@@ -116,7 +119,11 @@ public struct Timecode: Hashable, Codable, Sendable, CustomStringConvertible {
 
     /// Timecode at `seconds` of real time after 00:00:00:00.
     public init(realSeconds: Double, rate: FrameRate) {
-        self.init(frameNumber: Int((max(0, realSeconds) * rate.fps).rounded(.down)), rate: rate)
+        // The small epsilon makes `Timecode(realSeconds: tc.realSeconds)` round-trip: n / fps * fps
+        // is frequently n - 1e-12, which floor() used to turn into the previous frame.
+        guard realSeconds.isFinite, realSeconds > 0 else { self.init(frameNumber: 0, rate: rate); return }
+        let f = (realSeconds * rate.fps + 1e-6).rounded(.down)
+        self.init(frameNumber: f < Double(Int.max / 2) ? Int(f) : 0, rate: rate)
     }
 
     public func adding(frames delta: Int) -> Timecode { Timecode(frameNumber: frameNumber + delta, rate: rate) }
