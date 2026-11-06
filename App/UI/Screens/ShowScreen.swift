@@ -484,7 +484,20 @@ struct TransportColumn: View {
                     .foregroundStyle(shell.isRunning ? Theme.textSecondary : Theme.textTertiary)
             }
             .padding(.horizontal, 2)
-            GoKey(titleSize: 26).frame(maxHeight: .infinity)
+            Spacer(minLength: 0)
+            HStack(spacing: 5) {
+                Text("Next").foregroundStyle(Theme.textTertiary)
+                if let n = shell.isRunning ? shell.standbyCue : shell.cue(after: shell.standbyCue) {
+                    Text(n.number).font(Theme.numeric(12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                    Text(n.title).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                } else {
+                    Text("End of list").foregroundStyle(Theme.textTertiary)
+                }
+                Spacer(minLength: 0)
+            }
+            .font(Theme.caption)
+            .padding(.horizontal, 2)
+            GoKey(titleSize: 26).frame(maxHeight: 132)
             HStack(spacing: 8) {
                 StopKey()
                 PauseKey(showsLabel: false)

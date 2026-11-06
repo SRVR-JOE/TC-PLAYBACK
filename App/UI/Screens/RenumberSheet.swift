@@ -32,12 +32,10 @@ struct RenumberSheet: View {
         NavigationStack {
             VStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 16) {
-                    Picker("Cues", selection: $scope) {
-                        Text("All cues").tag(Scope.all)
-                        Text(selected.isEmpty ? "Selected" : "Selected (\(selected.count))").tag(Scope.selected)
-                    }
-                    .pickerStyle(.segmented)
-                    .disabled(selected.isEmpty)
+                    FlatSegmented(options: [(Scope.all, "All cues"),
+                                            (Scope.selected, selected.isEmpty ? "Selected" : "Selected (\(selected.count))")],
+                                  selection: $scope, height: 30)
+                        .disabled(selected.isEmpty)
 
                     HStack(spacing: 12) {
                         numberField("Start at", text: $startText, valid: start != nil)

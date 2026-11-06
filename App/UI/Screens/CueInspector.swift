@@ -76,7 +76,7 @@ struct CueInspector: View {
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text("Colour").font(Theme.caption).foregroundStyle(Theme.textSecondary)
-                HStack(spacing: 8) {
+                HStack(spacing: 5) {
                     swatch(nil)
                     ForEach(CueColorTag.allCases) { swatch($0) }
                 }
@@ -90,15 +90,15 @@ struct CueInspector: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .fill(tag?.color ?? Theme.surfaceSunken)
-                    .frame(width: 26, height: 26)
+                    .frame(width: 22, height: 22)
                 if tag == nil {
                     Image(systemName: "slash.circle").font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
                 }
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .strokeBorder(on ? Theme.textPrimary : Theme.hairline, lineWidth: on ? 2 : Theme.hairlineWidth)
-                    .frame(width: 32, height: 32)
+                    .frame(width: 28, height: 28)
             }
-            .frame(width: 32, height: 32)
+            .frame(width: 28, height: 28)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(tag?.label ?? "No colour")
