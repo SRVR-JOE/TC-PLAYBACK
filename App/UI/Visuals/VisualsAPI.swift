@@ -32,8 +32,9 @@ struct StereoMeterView: View {
 /// Oscilloscope of the SOURCE channels. Modes: L/R overlaid, L/R stacked, X/Y (phase/goniometer).
 /// Rising-edge trigger for a stable trace, adjustable timebase (pinch / buttons), graticule.
 /// LTC shows as a clean bi-phase square train — this is the "is my timecode healthy" view.
+/// `.eye` (additive) overlays every LTC bit period; only offered while a channel carries LTC.
 struct OscilloscopeView: View {
-    enum Mode: String, CaseIterable, Identifiable { case overlay, stacked, xy; var id: String { rawValue } }
+    enum Mode: String, CaseIterable, Identifiable { case overlay, stacked, xy, eye; var id: String { rawValue } }
     @Binding var mode: Mode
     var body: some View { OscilloscopeContent(mode: $mode) }
 }

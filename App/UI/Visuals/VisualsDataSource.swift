@@ -191,8 +191,8 @@ final class DemoSignalSynth {
             music[i] = self.music(at: s)
             guard ltcActive else { ltc[i] = 0; continue }
             let x = ltcSample(at: s)
-            // ~25 µs rise time, like a real LTC output stage.
-            y = i == 0 ? x : y + (x - y) * 0.62
+            // ~25 µs (10–90 %) rise time, like a real LTC output stage.
+            y = i == 0 ? x : y + (x - y) * 0.84
             ltc[i] = y + noise(s) * 0.002
         }
     }
