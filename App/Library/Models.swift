@@ -23,6 +23,9 @@ final class Track {
     var ltcRate: String?
     /// Downsampled peak overview for the waveform strip: interleaved [L,R] UInt8 pairs, ~2000 buckets.
     var overview: Data?
+    /// Media integrity fingerprint: "<size>:<sha256 of first 1 MB>" (see `MediaFingerprint`).
+    /// nil for tracks imported before this field existed.
+    var contentHash: String?
 
     init(title: String, fileName: String, duration: TimeInterval, sampleRate: Double, channelCount: Int) {
         self.id = UUID(); self.title = title; self.fileName = fileName; self.duration = duration
@@ -35,6 +38,8 @@ final class Track {
         return url
     }
     var fileURL: URL { Track.directory.appending(path: fileName) }
+    /// True when the audio file is no longer on disk.
+    var isMissing: Bool { !FileManager.default.fileExists(atPath: fileURL.path) }
 
     var ltcStartTimecode: Timecode? {
         guard let s = ltcStart, let r = ltcRate.flatMap(FrameRate.init(rawValue:)) else { return nil }
