@@ -7,6 +7,7 @@ DEST_IPHONE='platform=iOS Simulator,name=iPhone 17'
 DEST_IPAD='platform=iOS Simulator,name=iPad Pro 13-inch (M5)'
 MODE="${1:-sim-iphone}"
 DEST="$DEST_IPHONE"; [ "$MODE" = sim-ipad ] && DEST="$DEST_IPAD"
+[ -n "${SIM:-}" ] && DEST="platform=iOS Simulator,id=$SIM"   # SIM=<udid> to use your own simulator
 ACTION=build; [ "$MODE" = test ] && ACTION=test
 xcodebuild -project TCPlayback.xcodeproj -scheme TCPlayback -destination "$DEST" \
   -derivedDataPath build/DD $ACTION 2>&1 | grep -E "error:|warning: unre|\*\* (BUILD|TEST)|Test Case.*failed|Executed" | head -80
