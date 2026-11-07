@@ -471,3 +471,39 @@ final class ScopeCore: @unchecked Sendable {
         lock.withLock { result.rateMismatch = false; result.latency = shown }
     }
 }
+
+// MARK: - Spectrum feed
+
+extension ScopeCore: SpectrumFeed {
+    /// Latest output and input over the same span of host time, the output `shiftSeconds`
+    /// earlier (the spectrum's delay compensation). Worker thread of the spectrum analyser.
+    func spectrumRead(count n: Int, shiftSeconds: Double, into b: SpectrumBuffers) -> SpectrumFeedState {
+        let n = min(n, Self.historyLength, b.capacity)
+        var st = SpectrumFeedState()
+        lock.withLock {
+            let hasOut = outRing != nil && outStored > 0
+            let hasIn = inStored > 0
+            let inRate = inputClock.sampleRate
+            st.sampleRate = hasOut || inRate <= 0 ? outRate : inRate
+            st.inputFrames = hasIn ? inCount : nil
+            st.outputFrames = hasOut ? outCount : nil
+            st.roundTrip = result.latency.map { $0.lagSamples / outRate }
+            guard n > 0 else { return }
+            for p in [\SpectrumBuffers.inL, \.inR, \.outL, \.outR] {
+                b[keyPath: p].withUnsafeMutableBufferPointer { $0.update(repeating: 0) }
+            }
+            let sr = outRate
+            if hasOut, hasIn, let oO = outClock?.origin, let iO = inputClock.origin, abs(inRate - sr) < 0.5 {
+                let tEnd = min(oO + Double(outCount) / sr, iO + Double(inCount) / sr)
+                let jo = min(outCount, Int(((tEnd - shiftSeconds - oO) * sr).rounded()))
+                let ji = min(inCount, Int(((tEnd - iO) * sr).rounded()))
+                copy(oL, oR, end: jo, stored: outStored - (outCount - jo), count: n, into: &b.outL, &b.outR)
+                copy(iL, iR, end: ji, stored: inStored - (inCount - ji), count: n, into: &b.inL, &b.inR)
+            } else {
+                if hasOut { copy(oL, oR, end: outCount, stored: outStored, count: n, into: &b.outL, &b.outR) }
+                if hasIn { copy(iL, iR, end: inCount, stored: inStored, count: n, into: &b.inL, &b.inR) }
+            }
+        }
+        return st
+    }
+}

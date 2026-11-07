@@ -23,6 +23,30 @@ final class ScopePageModel {
     let output = ScopeAnalyzer()
     lazy var inputSource = HeldSource(input)
     lazy var outputSource = HeldSource(output)
+    let spectrum = SpectrumEngine()
+    #if DEBUG
+    lazy var demoFeed = SpectrumDemoFeed()
+    #endif
+
+    init() {
+        if isDemo { spectrum.settings.sources = .both }
+    }
+
+    var isDemo: Bool {
+        #if DEBUG
+        return SpectrumDemoFeed.isOn
+        #else
+        return false
+        #endif
+    }
+
+    /// Where the spectrum analyser reads: the Scope's own host-timed input and output history.
+    var spectrumFeed: SpectrumFeed {
+        #if DEBUG
+        if SpectrumDemoFeed.isOn { return demoFeed }
+        #endif
+        return output.core
+    }
 }
 
 /// Everything the readouts show, captured as values so Hold can freeze it.
@@ -78,6 +102,7 @@ struct ScopeReadout {
 struct ScopePage: View {
     enum Pane: String, CaseIterable, Identifiable { case input, output, both; var id: String { rawValue } }
     enum ScopeStyle: String, CaseIterable, Identifiable { case separate, overlay; var id: String { rawValue } }
+    enum Tab: String, CaseIterable, Identifiable { case scopes, spectrum; var id: String { rawValue } }
 
     @State private var model = ScopePageModel()
     @State private var hold = false
@@ -88,6 +113,9 @@ struct ScopePage: View {
     @State private var pane: Pane = .both
     @State private var style: ScopeStyle = .separate
     @State private var alignOverlay = true
+    @State private var tab: Tab = Self.launchTab
+    @State private var spectrumKind: SpectrumPanel.Kind = Self.launchSpectrumKind
+    @State private var visible = false
     @Environment(\.horizontalSizeClass) private var hSize
     @AppStorage(SettingsKey.clockColorPreset) private var presetRaw = ClockColorPreset.white.rawValue
     @AppStorage(SettingsKey.clockCustomColorHex) private var customHex = "#F2F3F5"
@@ -118,8 +146,15 @@ struct ScopePage: View {
                     header(r, wide: wide)
                     if let p = input.problem, input.info == nil { problemPanel(p) }
                     comparePanel(r, wide: wide)
-                    if style == .overlay { overlayPanel(height: wide ? 320 : 240) }
-                    if wide {
+                    if tab == .spectrum {
+                        SpectrumPanel(engine: model.spectrum, offersOutput: true, wide: wide,
+                                      plotHeight: wide ? min(760, max(380, geo.size.height - 360)) : 320,
+                                      kind: $spectrumKind)
+                            .panel(padding: wide ? 14 : 10)
+                    } else if style == .overlay { overlayPanel(height: wide ? 320 : 240) }
+                    if tab == .spectrum {
+                        EmptyView()
+                    } else if wide {
                         HStack(alignment: .top, spacing: Theme.pad) {
                             inputColumn(r, wide: true)
                             outputColumn(r, wide: true)
@@ -142,19 +177,42 @@ struct ScopePage: View {
         .onAppear {
             input.start()
             output.start()
+            visible = true
+            updateSpectrum()
         }
         .onDisappear {
+            visible = false
+            updateSpectrum()
             output.stop()
             input.stop()
             setHold(false)
         }
         .onChange(of: hold) { _, h in setHold(h) }
+        .onChange(of: tab) { _, _ in updateSpectrum() }
+        .onChange(of: input.isMono, initial: true) { _, m in model.spectrum.settings.inputMono = m && !model.isDemo }
+    }
+
+    /// The analyser runs only while its tab is on screen.
+    private func updateSpectrum() {
+        if visible && tab == .spectrum { model.spectrum.start(feed: model.spectrumFeed) } else { model.spectrum.stop() }
+    }
+
+    private static var launchTab: Tab {
+        let a = ProcessInfo.processInfo.arguments
+        return a.contains("-spectrum") || a.contains("-spectrumDemo") || a.contains("-spectrumView") ? .spectrum : .scopes
+    }
+
+    private static var launchSpectrumKind: SpectrumPanel.Kind {
+        let a = ProcessInfo.processInfo.arguments
+        if let i = a.firstIndex(of: "-spectrumView"), i + 1 < a.count, let k = SpectrumPanel.Kind(rawValue: a[i + 1]) { return k }
+        return .spectrum
     }
 
     private func setHold(_ h: Bool) {
         if hold != h { hold = h }
         model.inputSource.held = h
         model.outputSource.held = h
+        model.spectrum.held = h
         held = h ? live : nil
     }
 
@@ -167,7 +225,8 @@ struct ScopePage: View {
                     deviceLabel("Input", input.info?.name ?? "Opening input…", icon: "mic")
                     deviceLabel("Output", r.session.routeName, icon: "speaker.wave.2")
                     Spacer(minLength: 8)
-                    styleControls
+                    tabControls
+                    if tab == .scopes { styleControls }
                     holdButton
                     resetButton
                 }
@@ -175,11 +234,12 @@ struct ScopePage: View {
                 deviceLabel("Input", input.info?.name ?? "Opening input…", icon: "mic")
                 deviceLabel("Output", r.session.routeName, icon: "speaker.wave.2")
                 HStack(spacing: 10) {
-                    styleControls
+                    tabControls
                     Spacer(minLength: 4)
                     holdButton
                     resetButton
                 }
+                if tab == .scopes { styleControls }
             }
         }
         .panel(padding: wide ? 14 : 12)
@@ -196,6 +256,15 @@ struct ScopePage: View {
                 Text(name).font(Theme.label).foregroundStyle(Theme.textPrimary).lineLimit(1)
             }
         }
+    }
+
+    private var tabControls: some View {
+        Picker("Page", selection: $tab) {
+            Text("Scopes").tag(Tab.scopes)
+            Text("Spectrum").tag(Tab.spectrum)
+        }
+        .pickerStyle(.segmented)
+        .fixedSize()
     }
 
     private var styleControls: some View {
@@ -229,6 +298,7 @@ struct ScopePage: View {
             input.reset(); input.resetClip()
             output.reset(); output.resetClip()
             engine.resetClip()
+            model.spectrum.reset()
         } label: {
             Text("Reset")
                 .font(.system(size: 15, weight: .medium))
@@ -239,7 +309,7 @@ struct ScopePage: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Reset hits and peaks")
-        .accessibilityHint("Clears hits, peaks, clip lamps and the speed and latency measurements")
+        .accessibilityHint("Clears hits, peaks, clip lamps, the speed and latency measurements, and restarts the spectrum average")
     }
 
     private func problemPanel(_ text: String) -> some View {
