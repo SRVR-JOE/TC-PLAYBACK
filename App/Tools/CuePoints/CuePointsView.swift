@@ -239,7 +239,9 @@ struct CuePointsView: View {
                        beatGrid: beatGrid, // BEATGRID hook
                        lanes: store.visible, index: index, selection: $selection, selectMode: selectMode,
                        onRename: { p, name in p.name = name; save() },
-                       videoLane: CueVideoController.shared.timelineLane) // VIDEO hook
+                       videoLane: CueVideoController.shared.timelineLane, // VIDEO hook
+                       suggestionLane: SongMomentsController.shared.timelineLane(
+                           onSeek: { if loaded { engine.seek(to: $0) } }, onAccept: acceptMoments)) // ANALYZE hook
             .id(track.id)
             .overlay(alignment: .bottom) { namingOverlay.padding(8) }
             .overlay(alignment: .topTrailing) { undoButton.padding(.top, 26).padding(.trailing, 8) }
@@ -278,6 +280,8 @@ struct CuePointsView: View {
             }
             Button { span = max(2, track.duration) } label: { Text("Fit").font(Theme.label).fixedSize() }
                 .buttonStyle(.plain).foregroundStyle(Theme.textSecondary).accessibilityLabel("Zoom to fit")
+            SongMomentsButton(track: track, grid: $beatGrid, clock: clock, compact: !isPad, onAccept: acceptMoments,
+                              onSeek: { if loaded { engine.seek(to: $0) } }) // ANALYZE hook
             BeatGridButton(grid: $beatGrid, track: track, clock: clock, compact: !isPad) // BEATGRID hook
             CueFlashMenu(compact: !isPad)
             exportMenu(prominent: true)
@@ -1190,6 +1194,16 @@ struct CuePointsView: View {
             try? await Task.sleep(for: .milliseconds(400))
             if !Task.isCancelled { save() }
         }
+    }
+
+    /// ANALYZE hook: accepted suggestions become marks by the normal numbering and ripple rules.
+    private func acceptMoments(_ ms: [SongMoment]) {
+        guard let track else { return }
+        for p in MomentAcceptance.points(for: ms, trackID: track.id, existing: points, types: store.types,
+                                         fps: clock.rate.fps, duration: track.duration, numberRepeats: numberRepeats) {
+            context.insert(p)
+        }
+        save()
     }
 
     private func togglePlay() { if loaded { engine.togglePlayPause() } }

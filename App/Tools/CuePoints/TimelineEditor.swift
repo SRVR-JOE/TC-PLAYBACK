@@ -66,6 +66,8 @@ struct TimelineEditor: View {
 
     /// VIDEO hook: optional film-strip lane under the timeline, given the visible (origin, span).
     var videoLane: ((TimeInterval, TimeInterval) -> AnyView)? = nil
+    /// ANALYZE hook: optional Suggestions lane (ghost marks from Find moments), given (origin, span).
+    var suggestionLane: ((TimeInterval, TimeInterval) -> AnyView)? = nil
     @State private var spanAtPinch: TimeInterval?
     /// Left edge of the view in seconds.
     @State private var origin: TimeInterval = 0
@@ -126,6 +128,7 @@ struct TimelineEditor: View {
                 canvas(L)
             }
         }
+        if let suggestionLane { Rectangle().fill(Theme.hairline).frame(height: 1); suggestionLane(origin, span) } // ANALYZE hook
         if let videoLane { Rectangle().fill(Theme.hairline).frame(height: 1); videoLane(origin, span) } // VIDEO hook
         }
         .clipShape(RoundedRectangle(cornerRadius: Theme.corner))
