@@ -22,6 +22,7 @@ struct CuePointsView: View {
     @State private var selected: UUID?
     @State private var saveTask: Task<Void, Never>?
     @State private var span: TimeInterval = 30
+    @State private var beatGrid: BeatGrid? // BEATGRID hook
 
     private let engine = PlaybackEngine.shared
     private var isPad: Bool { hSize == .regular }
@@ -139,7 +140,8 @@ struct CuePointsView: View {
                        playhead: engine.currentTime, isPlaying: engine.transport == .playing,
                        selected: $selected,
                        onSeek: { if loaded { engine.seek(to: $0) } },
-                       onMove: move, span: $span)
+                       onMove: move, span: $span,
+                       beatGrid: beatGrid) // BEATGRID hook
             .id(track.id)
     }
 
@@ -161,6 +163,7 @@ struct CuePointsView: View {
                 .buttonStyle(.plain).foregroundStyle(Theme.textSecondary).accessibilityLabel("Zoom in")
             Button { span = max(2, track.duration) } label: { Text("Fit").font(Theme.label) }
                 .buttonStyle(.plain).foregroundStyle(Theme.textSecondary).accessibilityLabel("Zoom to fit")
+            BeatGridButton(grid: $beatGrid, track: track, clock: clock, compact: !isPad) // BEATGRID hook
             CueFlashMenu(compact: !isPad)
             exportMenu(prominent: true)
         }
@@ -462,6 +465,7 @@ struct CuePointsView: View {
     private func open() {
         guard let track else { return }
         clock = CuePointClock.forTrack(track)
+        beatGrid = BeatGridStore.load(trackID: track.id) // BEATGRID hook
         reload()
         peaks = []
         let url = track.fileURL, ch = track.ltcChannel == "left" ? 1 : 0
@@ -503,7 +507,8 @@ struct CuePointsView: View {
     private func mark() {
         guard let track, loaded else { return }
         // Snap to the nearest frame so exported times line up with the console's grid.
-        let f = (engine.currentTime * clock.rate.fps).rounded() / clock.rate.fps
+        let t = beatGrid?.snapped(engine.currentTime) ?? engine.currentTime // BEATGRID hook
+        let f = (t * clock.rate.fps).rounded() / clock.rate.fps
         let n = points.count + 1
         let p = CuePoint(trackID: track.id, time: f, name: "Cue \(n)", colorHex: CuePointColor.amber.rawValue)
         context.insert(p)
