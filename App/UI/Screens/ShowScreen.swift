@@ -49,6 +49,7 @@ struct ShowScreen: View {
             let narrow = geo.size.width < 860
             VStack(spacing: 10) {
                 ClockPanel().frame(height: max(150, geo.size.height * (tall ? 0.22 : 0.27)))
+                TrackMarksStrip(compact: geo.size.width < 640)
                 WaveformPanel(height: 64)
                 if tall {
                     // Portrait: routing + horizontal meters in one row, scope full width below.
@@ -86,6 +87,7 @@ struct ShowScreen: View {
             VStack(spacing: 10) {
                 ClockPanel(fill: Theme.background, bordered: false)
                     .frame(height: max(170, geo.size.height * 0.30))
+                TrackMarksStrip(compact: geo.size.width < 640)
                 CueStrip().frame(height: 74)
                 WaveformPanel(height: 56, showsHeader: false)
                 HStack(spacing: 10) {
@@ -114,6 +116,7 @@ struct ShowScreen: View {
                     MixerBank().frame(width: min(292, geo.size.width * 0.3))
                     VStack(spacing: 10) {
                         ClockPanel().frame(height: max(140, geo.size.height * 0.22))
+                        TrackMarksStrip(compact: true)
                         WaveformPanel(height: 52)
                         ScopePanel(mode: $scopeMode).frame(maxHeight: .infinity)
                     }
@@ -145,6 +148,7 @@ struct ShowScreen: View {
         ScrollView {
             VStack(spacing: 8) {
                 ClockPanel().frame(height: 140)
+                TrackMarksStrip(compact: true)
                 WaveformPanel(height: 44)
                 RoutingPanel(compact: true).panel(padding: 10)
                 MeterPanel(axis: .horizontal).frame(height: 76)
