@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 import TCKit
 
 /// Cue points: listen to a track, tap Mark (or a type pad) to drop points, name and tidy them,
@@ -14,6 +15,8 @@ struct CuePointsView: View {
     @State private var clock = CuePointClock(start: Timecode(hours: 1, rate: .fps30))
     @State private var options = CuePointExport.DisguiseOptions()
     @State private var exports: [ExportFile] = []
+    @State private var showImporter = false
+    @State private var importMessage: String?
     @State private var blocked = false
     @State private var editingStart = false
     @State private var startText = ""
@@ -76,7 +79,7 @@ struct CuePointsView: View {
 
     private enum Field: Hashable { case row(UUID), name, cueNumber, fade }
 
-    struct ExportFile: Identifiable { let id = UUID(); let title: String; let detail: String; let url: URL }
+    struct ExportFile: Identifiable { let id = UUID(); let format: CuePointFormat; let title: String; let detail: String; let urls: [URL] }
 
     var body: some View {
         GeometryReader { geo in
@@ -753,17 +756,28 @@ struct CuePointsView: View {
         .accessibilityLabel("Track, \(track?.title ?? "none")")
     }
 
+    static let exportGroups: [(title: String, formats: [CuePointFormat])] = [
+        ("Media servers", [.disguise, .disguisePerType]),
+        ("Lighting consoles", [.grandMA3Timecode, .grandMA3CueListMacro, .eosASCII, .eosCSV, .chamsys]),
+        ("Audio and other", [.reaper, .audition, .qlab, .csv]),
+    ]
+
     private func exportMenu(prominent: Bool) -> some View {
         Menu {
-            Section("Export \(points.count) point\(points.count == 1 ? "" : "s")") {
-                ForEach(exports) { f in
-                    ShareLink(item: f.url) { Label { Text(f.title); Text(f.detail) } icon: { Image(systemName: "square.and.arrow.up") } }
+            ForEach(Self.exportGroups, id: \.title) { g in
+                Section(g.title) {
+                    ForEach(exports.filter { g.formats.contains($0.format) }) { f in
+                        ShareLink(items: f.urls) { Label { Text(f.title); Text(f.detail) } icon: { Image(systemName: "square.and.arrow.up") } }
+                    }
                 }
             }
             Section("disguise options") {
                 Toggle("TC tag at track start", isOn: $options.tcTagAtStart)
                 Toggle("Tag points as CUE numbers", isOn: $options.cueTags)
                 Toggle("Section at each point", isOn: $options.sectionBreaks)
+            }
+            Section {
+                Button { showImporter = true } label: { Label("Import marks…", systemImage: "square.and.arrow.down") }
             }
         } label: {
             if prominent {
@@ -780,8 +794,17 @@ struct CuePointsView: View {
                 Label("Export", systemImage: "square.and.arrow.up")
             }
         }
-        .disabled(points.isEmpty)
+        .disabled(track == nil)
         .onChange(of: options) { _, _ in rebuildExports() }
+        .onChange(of: beatGrid) { _, _ in rebuildExports() }
+        .fileImporter(isPresented: $showImporter,
+                      allowedContentTypes: CuePointImport.fileExtensions.compactMap { UTType(filenameExtension: $0) } + [.commaSeparatedText, .tabSeparatedText, .xml, .wav, .plainText],
+                      allowsMultipleSelection: false) { r in
+            if case .success(let urls) = r, let u = urls.first { importMarks(from: u) }
+        }
+        .alert(importMessage ?? "", isPresented: Binding(get: { importMessage != nil }, set: { if !$0 { importMessage = nil } })) {
+            Button("OK", role: .cancel) {}
+        }
     }
 
     private var blockedBanner: some View {
@@ -1157,21 +1180,54 @@ struct CuePointsView: View {
     private func rebuildExports() {
         guard let track, !points.isEmpty else { exports = []; return }
         let rows = CuePointRow.rows(for: points, index: index)
+        // Single-table formats mix every type in one list, so number them across the whole track;
+        // per-type formats (MA3, Eos, disguise per type) keep each type's own numbering.
+        let global = rows.enumerated().map { i, r in var r = r; r.number = i + 1; return r }
         let name = track.title
+        let opts = beatGrid.map { $0.disguiseOptions(options) } ?? options
         var out: [ExportFile] = []
-        if let u = try? CuePointExport.write(CuePointExport.disguiseCueTable(trackName: name, rows: rows, clock: clock, options: options),
-                                             name: CuePointExport.disguiseFileName(trackName: name)) {
-            out.append(.init(title: "disguise cue table", detail: "objects/table · name must match the d3 track", url: u))
-        }
-        if let u = try? CuePointExport.write(CuePointExport.grandMA3Timecode(trackName: name, rows: rows, clock: clock, duration: track.duration),
-                                             name: CuePointExport.grandMA3FileName(trackName: name)) {
-            out.append(.init(title: "grandMA3 timecode (beta)", detail: "datapools/timecodes · Import Timecode", url: u))
-        }
-        if let u = try? CuePointExport.write(CuePointExport.csv(trackName: name, rows: rows, clock: clock),
-                                             name: CuePointExport.csvFileName(trackName: name)) {
-            out.append(.init(title: "CSV", detail: "Numbers, Excel, other marker tools", url: u))
+        for f in CuePointFormat.allCases {
+            let perType: Bool = switch f { case .disguisePerType, .grandMA3Timecode, .grandMA3CueListMacro, .eosASCII, .eosCSV: true; default: false }
+            let use = perType ? rows : global
+            var urls: [URL] = []
+            if f == .disguise, let g = beatGrid, !g.sections.isEmpty {
+                // With song sections, Section_Break follows the sections and Beat follows the grid's BPM.
+                let text = CuePointExport.disguiseCueTable(trackName: name, rows: use, clock: clock, grid: g, options: opts)
+                if let u = try? CuePointExport.write(text, name: CuePointExport.disguiseFileName(trackName: name)) { urls = [u] }
+            } else {
+                urls = (try? f.write(rows: use, clock: clock, trackName: name, types: store.types,
+                                     duration: track.duration, disguise: opts)) ?? []
+            }
+            guard !urls.isEmpty else { continue }
+            out.append(.init(format: f, title: f.confidence == .bestGuess ? "\(f.label) (untested)" : f.label,
+                             detail: f.note, urls: urls))
         }
         exports = out
+    }
+
+    /// Adds marks from a CSV/TSV, disguise table, Reaper markers, grandMA3 timecode or WAV markers.
+    private func importMarks(from url: URL) {
+        guard let track else { return }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let data = try Data(contentsOf: url)
+            let found = try CuePointImport.parse(data: data, filename: url.lastPathComponent, clock: clock)
+            for m in found where m.time >= 0 && m.time <= track.duration {
+                let p = CuePoint(trackID: track.id, time: snapped(m.time), name: m.name.isEmpty ? "Imported" : m.name,
+                                 colorHex: m.colorHex)
+                p.cueID = m.cueID
+                if let tn = m.typeName?.trimmingCharacters(in: .whitespaces), !tn.isEmpty {
+                    let t = store.types.first { $0.name.caseInsensitiveCompare(tn) == .orderedSame } ?? store.add(name: tn)
+                    p.typeID = t.id == CuePointType.defaultID ? nil : t.id
+                }
+                context.insert(p)
+            }
+            save()
+            importMessage = found.isEmpty ? "No marks found in \(url.lastPathComponent)." : "Added \(found.count) mark\(found.count == 1 ? "" : "s") from \(url.lastPathComponent)."
+        } catch {
+            importMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn't read \(url.lastPathComponent)."
+        }
     }
 }
 
