@@ -55,6 +55,9 @@ struct CueCallerSettings: Codable, Equatable, Sendable {
     /// Speak only marks that have a call note.
     var onlyMarksWithNotes = true
     var areas: [CueCallArea] = [CueCallArea(name: "Cameras", language: "en-US")]
+    /// Marks in one area within a frame of each other are called as one stack (one standby,
+    /// one go) instead of the later one cutting the earlier one off.
+    var stackSameFrame = true
 
     static func load(_ d: UserDefaults = .standard) -> CueCallerSettings {
         guard let data = d.data(forKey: key),
@@ -63,6 +66,25 @@ struct CueCallerSettings: Codable, Equatable, Sendable {
     }
     func save(_ d: UserDefaults = .standard) {
         if let data = try? JSONEncoder().encode(self) { d.set(data, forKey: Self.key) }
+    }
+}
+
+extension CueCallerSettings {
+    /// Fields missing from older saved settings keep their defaults (instead of the whole
+    /// decode failing and resetting the operator's areas).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = CueCallerSettings()
+        self.init()
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? d.enabled
+        source = try c.decodeIfPresent(CueCallerSource.self, forKey: .source) ?? d.source
+        standbyLead = try c.decodeIfPresent(Double.self, forKey: .standbyLead) ?? d.standbyLead
+        sayStandby = try c.decodeIfPresent(Bool.self, forKey: .sayStandby) ?? d.sayStandby
+        includeMarkName = try c.decodeIfPresent(Bool.self, forKey: .includeMarkName) ?? d.includeMarkName
+        dedicatedCallChannels = try c.decodeIfPresent(Bool.self, forKey: .dedicatedCallChannels) ?? d.dedicatedCallChannels
+        onlyMarksWithNotes = try c.decodeIfPresent(Bool.self, forKey: .onlyMarksWithNotes) ?? d.onlyMarksWithNotes
+        areas = try c.decodeIfPresent([CueCallArea].self, forKey: .areas) ?? d.areas
+        stackSameFrame = try c.decodeIfPresent(Bool.self, forKey: .stackSameFrame) ?? d.stackSameFrame
     }
 }
 
@@ -77,6 +99,8 @@ struct CueCall: Hashable, Sendable {
     let at: TimeInterval
     /// Final text in the area's language.
     let text: String
+    /// Calls stacked in this utterance (1 = a plain call).
+    var lineCount = 1
 }
 
 /// Turns the operator's note into an area's language. Implementations cache, and must return

@@ -70,6 +70,10 @@ final class CueCaller {
     @ObservationIgnored var renderStep: CueCallRenderStep? { didSet { clearRenders() } }
     /// The language call notes are written in.
     @ObservationIgnored var noteLanguage: String = Locale.current.language.minimalIdentifier
+    /// Crew corrections per stacked line (the language part sets the translation store's lookup).
+    @ObservationIgnored var lineOverride: CueCallLineOverride? { didSet { replan() } }
+    /// Renamed cameras ("Jib", "Steadicam"), recognised at the start of a line for the short standby.
+    @ObservationIgnored var cameraNames: [String] = [] { didSet { if cameraNames != oldValue { replan() } } }
     @ObservationIgnored var defaults: UserDefaults = .standard
 
     // MARK: Internals
@@ -253,13 +257,25 @@ final class CueCaller {
         replan()
     }
 
+    /// One frame at the followed track's rate (marks this close stack into one call).
+    private var frameDuration: TimeInterval { clock.map { 1 / $0.rate.fps } ?? 1.0 / 30 }
+
+    /// The calls `marks` would make with the caller's current settings, translator, wording,
+    /// corrections and cameras (also used to prepare voices offline, so the texts match).
+    func preparedCalls(for marks: [CueCallMark]) async -> [PreparedCueCall] {
+        await CueCallScheduler.prepare(marks: marks, settings: settings, noteLanguage: noteLanguage, translator: translator,
+                                       phrase: phrase, lineOverride: lineOverride, cameraNames: cameraNames, frame: frameDuration)
+    }
+
     private func replan() {
         planGen += 1
         let gen = planGen, marks = marks, settings = settings
         let translator = translator, lang = noteLanguage, phrase = phrase
+        let lineOverride = lineOverride, cameraNames = cameraNames, frame = frameDuration
         Task { [weak self] in
             let prepared = await CueCallScheduler.prepare(marks: marks, settings: settings, noteLanguage: lang,
-                                                          translator: translator, phrase: phrase)
+                                                          translator: translator, phrase: phrase, lineOverride: lineOverride,
+                                                          cameraNames: cameraNames, frame: frame)
             guard let self, gen == self.planGen else { return }
             let built = prepared.map(\.call)
             self.notes = Dictionary(prepared.map { (CueCallKey(markID: $0.call.markID, areaID: $0.call.areaID, kind: $0.call.kind), $0.note) },

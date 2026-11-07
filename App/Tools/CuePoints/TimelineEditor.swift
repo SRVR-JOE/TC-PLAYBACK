@@ -236,7 +236,7 @@ struct TimelineEditor: View {
     private func flagWidth(_ p: CuePoint, fontSize: CGFloat) -> CGFloat {
         let label = "\(idx.number(of: p)) \(p.name)" as NSString
         let w = label.size(withAttributes: [.font: UIFont.systemFont(ofSize: fontSize, weight: .semibold)]).width
-        return min(ceil(w) + 8, 208) + (p.callNote.isEmpty ? 0 : 13)
+        return min(ceil(w) + 8, 208) + (p.callNote.isEmpty ? 0 : 13) + (p.callCount > 1 ? 8 : 0)
     }
 
     private func setSelection(_ s: Set<UUID>, primary: UUID?) {
@@ -453,7 +453,8 @@ struct TimelineEditor: View {
             let resolved = gc.resolve(text)
             // A mark with a call note carries a small speaker glyph at the end of its flag.
             let hasCall = !p.callNote.isEmpty
-            let tw = min(resolved.measure(in: CGSize(width: 200, height: L.laneH)).width + 8, 208) + (hasCall ? 13 : 0)
+            let stack = p.callCount   // stacked calls: a small count after the glyph
+            let tw = min(resolved.measure(in: CGSize(width: 200, height: L.laneH)).width + 8, 208) + (hasCall ? 13 : 0) + (stack > 1 ? 8 : 0)
             let flag = CGRect(x: px, y: top + 1, width: tw, height: L.laneH - 2)
             gc.fill(Path(roundedRect: flag, cornerRadius: 2), with: .color(color))
             if on { gc.stroke(Path(roundedRect: flag.insetBy(dx: -1, dy: -1), cornerRadius: 3), with: .color(Theme.textPrimary), lineWidth: 1) }
@@ -463,7 +464,13 @@ struct TimelineEditor: View {
                 if hasCall {
                     var glyph = gc.resolve(Image(systemName: "speaker.wave.1.fill"))
                     glyph.shading = .color(Theme.background.opacity(0.75))
-                    l.draw(glyph, in: CGRect(x: flag.maxX - 12, y: top + L.laneH / 2 - 4.5, width: 9, height: 9))
+                    let gx = flag.maxX - (stack > 1 ? 20 : 12)
+                    l.draw(glyph, in: CGRect(x: gx, y: top + L.laneH / 2 - 4.5, width: 9, height: 9))
+                    if stack > 1 {
+                        let n = gc.resolve(Text("\(min(stack, 9))").font(.system(size: 9, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(Theme.background.opacity(0.75)))
+                        l.draw(n, at: CGPoint(x: gx + 11, y: top + L.laneH / 2), anchor: .leading)
+                    }
                 }
             }
         }

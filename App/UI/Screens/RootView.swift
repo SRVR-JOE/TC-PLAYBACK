@@ -40,6 +40,7 @@ struct RootView: View {
         .fullScreenCover(isPresented: $shell.showOutputTest) { ToolSheet(title: "Output test") { OutputTestSlot() }.preferredColorScheme(scheme) }
         .fullScreenCover(isPresented: $shell.showCuePoints) { ToolSheet(title: "Cue points") { CuePointsView() }.preferredColorScheme(scheme) }
         .fullScreenCover(isPresented: $shell.showInputAnalyzer) { ToolSheet(title: "Input analyzer") { InputAnalyzerView() }.preferredColorScheme(scheme) }
+        .fullScreenCover(isPresented: $shell.showCameras) { ToolSheet(title: "Cameras") { CamerasPage().debugPhoneFrame() }.preferredColorScheme(scheme) }
         .fullScreenCover(isPresented: $shell.showScope) { ToolSheet(title: "Scope") { ScopePage() }.preferredColorScheme(scheme) }
         .fullScreenCover(isPresented: $shell.showFullClock) { FullScreenClock() }
         .fullScreenCover(isPresented: $shell.showShowMode) { PhoneShowMode().preferredColorScheme(.dark) }
@@ -83,6 +84,9 @@ struct RootView: View {
         #endif
         DemoContent.seedIfNeeded(context: context)
         ShowController.shared.restore(context: context)
+        // Once: the Macklemore show gets its camera brief (never touched again after).
+        let lists = ((try? context.fetch(FetchDescriptor<Playlist>())) ?? []).map { (id: $0.id, name: $0.name) }
+        CameraBriefStore.shared.seedMacklemoreOnce(playlists: lists)
         if let p = ShowController.shared.playlist { shell.open(p) }
         if shell.playlist == nil { openLastPlaylist() }
         shell.engine.onRemoteNext = { ShowController.shared.next() }
@@ -94,6 +98,11 @@ struct RootView: View {
         // -scope: open the Scope page on launch (QA only; listens, never plays).
         if ProcessInfo.processInfo.arguments.contains("-scope") { shell.showScope = true }
         if ProcessInfo.processInfo.arguments.contains("-cuePoints") { shell.showCuePoints = true }
+        // -cameras [brief|edit]: the Cameras page with the Macklemore preview brief (QA only).
+        if ProcessInfo.processInfo.arguments.contains("-cameras") {
+            CameraBriefStore.shared.set(CameraBrief.preview)
+            shell.showCameras = true
+        }
         // -importShow <path>: open a show/audio file from disk as if it came from Files (QA only).
         if let i = ProcessInfo.processInfo.arguments.firstIndex(of: "-importShow"), i + 1 < ProcessInfo.processInfo.arguments.count {
             shell.handleOpenURL(URL(fileURLWithPath: ProcessInfo.processInfo.arguments[i + 1]), context: context)
@@ -215,6 +224,7 @@ struct LayoutSwitcher: View {
             Button { shell.showPads = true } label: { Label("Pads", systemImage: "square.grid.3x3") }
             Button { shell.showOutputTest = true } label: { Label("Output test", systemImage: "speaker.wave.2") }
             Button { shell.showCuePoints = true } label: { Label("Cue points", systemImage: "flag") }
+            Button { shell.showCameras = true } label: { Label("Cameras", systemImage: "video") }
             Button { shell.showScope = true } label: { Label("Scope", systemImage: "waveform.path.ecg") }
         } label: {
             Label(layout.label, systemImage: layout.symbol)
@@ -329,12 +339,14 @@ private struct PhoneMoreList: View {
     @State private var outputTest = false
     @State private var scope = false
     @State private var cuePoints = false
+    @State private var cameras = false
     var body: some View {
         List {
             Section {
                 row("Playlists", "list.bullet") { shell.showPlaylists = true }
                 row("Output test", "speaker.wave.2") { outputTest = true }
                 row("Cue points", "flag") { cuePoints = true }
+                row("Cameras", "video") { cameras = true }
                 row("Scope", "waveform.path.ecg") { scope = true }
                 row("Settings", "gearshape") { shell.showSettings = true }
             }
@@ -351,6 +363,13 @@ private struct PhoneMoreList: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Theme.background)
                 .navigationTitle("Output test")
+        }
+        .navigationDestination(isPresented: $cameras) {
+            CamerasPage()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.background)
+                .navigationTitle("Cameras")
+                .navigationBarTitleDisplayMode(.inline)
         }
         .navigationDestination(isPresented: $cuePoints) {
             CuePointsView()

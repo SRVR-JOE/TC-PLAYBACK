@@ -17,5 +17,19 @@ enum CueCallerWiring {
         caller.phrase = { kind, note, language in CueCallTemplates.text(kind, note: note, language: language) }
         caller.renderStep = router.renderStep()
         caller.noteLanguage = CueCallerUIModel.shared.noteLanguage
+        caller.lineOverride = { markID, line, language in
+            CueCallTranslationStore.shared.activeOverride(markID: markID, language: language, line: line)
+        }
+        trackCameraNames(caller)
+    }
+
+    /// Keep the caller's renamed cameras in step with the current show's camera brief (edits and
+    /// switching shows both count).
+    private static func trackCameraNames(_ caller: CueCaller) {
+        withObservationTracking {
+            caller.cameraNames = CueCameraPresetStore.shared.presets.customNames
+        } onChange: {
+            Task { @MainActor in trackCameraNames(caller) }
+        }
     }
 }

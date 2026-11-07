@@ -10,6 +10,8 @@ struct ShowFile: Codable {
     var playlist: PlaylistDTO
     var tracks: [TrackDTO]
     var cues: [CueDTO]
+    /// The show's camera brief (added later; older files have none and still import).
+    var cameraBrief: CameraBrief? = nil
 
     struct PlaylistDTO: Codable { var id: UUID; var name: String }
 
@@ -62,7 +64,7 @@ enum ShowPackage {
     // MARK: Export
 
     @MainActor
-    static func export(_ playlist: Playlist) throws -> URL {
+    static func export(_ playlist: Playlist, briefs: CameraBriefStore = .shared) throws -> URL {
         let fm = FileManager.default
         let name = safeName(playlist.name)
         let staging = URL.temporaryDirectory.appending(path: "tcshow-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -95,7 +97,8 @@ enum ShowPackage {
                           genStart: c.genStart, genRate: c.genRateRaw, genDuration: c.genDuration, genSide: c.genSideRaw,
                           leftEnabled: c.leftEnabled, rightEnabled: c.rightEnabled, swapped: c.swapped, gainDB: c.gainDB,
                           follow: c.followRaw, colorHex: c.colorHex)
-                })
+                },
+                cameraBrief: briefs.hasBrief(playlist.id) ? briefs.brief(playlist.id) : nil)
             let enc = JSONEncoder()
             enc.outputFormatting = [.prettyPrinted, .sortedKeys]
             enc.dateEncodingStrategy = .iso8601
@@ -152,7 +155,7 @@ enum ShowPackage {
     }
 
     @MainActor
-    static func importShow(from url: URL, context: ModelContext) async throws -> Playlist {
+    static func importShow(from url: URL, context: ModelContext, briefs: CameraBriefStore = .shared) async throws -> Playlist {
         let (show, root, work) = try await unpack(url)
         defer { try? FileManager.default.removeItem(at: work) }
         let fm = FileManager.default
@@ -192,6 +195,7 @@ enum ShowPackage {
             context.insert(c)
             playlist.cues.append(c)
         }
+        if let brief = show.cameraBrief { briefs.set(brief, for: playlist.id) }
         PlaylistEditor.save(context)
         for t in needsAnalysis { TrackImporter.startAnalysis(for: t, context: context) }
         return playlist

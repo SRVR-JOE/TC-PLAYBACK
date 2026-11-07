@@ -86,7 +86,7 @@ struct TrackMarksStrip: View {
         else { return nil }
         let remaining = p.time - max(0, t)
         let standby = s.sayStandby && remaining > s.standbyLead
-        let note = p.callNote.trimmingCharacters(in: .whitespaces)
+        let note = CueCallStack.summary(p.callNote)
         return CueCallerUpcoming(markID: p.id, markName: p.name, text: note.isEmpty ? p.name : note,
                                  kind: standby ? .standby : .go, secondsToGo: standby ? remaining - s.standbyLead : remaining)
     }

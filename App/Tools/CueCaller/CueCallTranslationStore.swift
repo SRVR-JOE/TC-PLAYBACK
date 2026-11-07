@@ -11,8 +11,11 @@ struct CueCallOverride: Codable, Hashable, Identifiable, Sendable {
     /// What to say instead.
     var text: String
     var updatedAt: Date = .now
+    /// Set for a correction of one stacked line (then `sourceText` is that line); nil = the
+    /// whole note (corrections written before stacks).
+    var line: String? = nil
 
-    var id: String { "\(markID.uuidString)|\(language)" }
+    var id: String { CueCallTranslationStore.overrideID(markID, language, line: line) }
 
     /// The mark's note was edited after this correction was written; it is no longer spoken.
     func isStale(currentNote: String) -> Bool {
@@ -55,6 +58,11 @@ final class CueCallTranslationStore: @unchecked Sendable {
     static func normalize(_ s: String) -> String {
         s.trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    static func overrideID(_ markID: UUID, _ language: String, line: String?) -> String {
+        let base = "\(markID.uuidString)|\(CueCallLanguage.key(language))"
+        return line.map { base + "|" + normalize($0) } ?? base
     }
 
     private static func cacheKey(_ text: String, _ source: String, _ target: String) -> String {
@@ -130,6 +138,43 @@ final class CueCallTranslationStore: @unchecked Sendable {
         return overrides.values
             .filter { $0.language == k && $0.sourceText == n }
             .max { $0.updatedAt < $1.updatedAt }?.text
+    }
+
+    // MARK: Per line
+
+    /// Set (or clear, with empty `text`) the correction for one line of a mark's stack.
+    func setOverride(markID: UUID, language: String, line: String, text: String) {
+        let k = CueCallLanguage.key(language)
+        let id = Self.overrideID(markID, k, line: line)
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        lock.lock()
+        if trimmed.isEmpty {
+            overrides.removeValue(forKey: id)
+            // A whole-note correction written for this same line goes too.
+            let legacy = Self.overrideID(markID, k, line: nil)
+            if let o = overrides[legacy], o.sourceText == Self.normalize(line) { overrides.removeValue(forKey: legacy) }
+        } else {
+            overrides[id] = CueCallOverride(markID: markID, language: k, sourceText: Self.normalize(line), text: trimmed,
+                                            line: Self.normalize(line))
+        }
+        let snapshot = overrides
+        lock.unlock()
+        write(snapshot, "overrides.json")
+    }
+
+    /// The correction for one line: written for that line, or a whole-note correction from before
+    /// stacks whose note was exactly this line.
+    func override(markID: UUID, language: String, line: String) -> CueCallOverride? {
+        let n = Self.normalize(line)
+        lock.lock(); defer { lock.unlock() }
+        if let o = overrides[Self.overrideID(markID, language, line: n)] { return o }
+        if let o = overrides[Self.overrideID(markID, language, line: nil)], o.sourceText == n { return o }
+        return nil
+    }
+
+    /// The correction to speak for one line (never stale: it's matched by the line's text).
+    func activeOverride(markID: UUID, language: String, line: String) -> String? {
+        override(markID: markID, language: language, line: line)?.text
     }
 
     func overrides(for markID: UUID) -> [CueCallOverride] {

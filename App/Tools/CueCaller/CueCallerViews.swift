@@ -268,8 +268,9 @@ struct CueCallerSettingsForm: View {
                 Toggle("Only call marks with a note", isOn: $model.settings.onlyMarksWithNotes)
                 Toggle("Say the mark name with the call", isOn: $model.settings.includeMarkName)
                 Toggle("Keep calls off the programme outputs", isOn: $model.settings.dedicatedCallChannels)
+                Toggle("Stack calls on the same frame", isOn: $model.settings.stackSameFrame)
             } header: { formHeader("Calling") } footer: {
-                Text("The go lands on the mark. With LTC input, another machine is the master and this app only listens.")
+                Text("The go lands on the mark. Marks on the same frame in one area are called together, with one go. With LTC input, another machine is the master and this app only listens.")
             }
             .listRowBackground(Theme.surface)
 
@@ -652,6 +653,7 @@ struct CueCallerPreviewHost: ViewModifier {
             CueCallArea(name: "Kameror", language: "sv-SE", voiceID: ElevenLabsVoiceID.tag("preview-erik"), outputChannels: [10]),
         ]
         CueCallVoicesModel.shared.seedPreview()
+        CameraBriefStore.shared.set(CameraBrief.preview)
     }
 
     func body(content: Content) -> some View {
