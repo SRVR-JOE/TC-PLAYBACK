@@ -5,6 +5,11 @@ import TCKit
 struct InputAnalyzerView: View {
     @State private var analyzer = InputAnalyzer()
     @State private var scopeMode: OscilloscopeView.Mode = .stacked
+    @State private var spectrum = SpectrumEngine()
+    @State private var spectrumKind: SpectrumPanel.Kind = .spectrum
+    #if DEBUG
+    @State private var demoFeed: SpectrumDemoFeed = { let f = SpectrumDemoFeed(); f.inputOnly = true; return f }()
+    #endif
     @Environment(\.horizontalSizeClass) private var hSize
     @AppStorage(SettingsKey.clockColorPreset) private var presetRaw = ClockColorPreset.white.rawValue
     @AppStorage(SettingsKey.clockCustomColorHex) private var customHex = "#F2F3F5"
@@ -34,14 +39,22 @@ struct InputAnalyzerView: View {
                     }
                     if !analyzer.isMono { comparePanel }
                     scopePanel(height: wide ? 300 : 220)
+                    spectrumPanel(wide: wide)
                 }
                 .padding(Theme.pad)
             }
         }
         .background(Theme.background.ignoresSafeArea())
         .visualsDataSource(analyzer)
-        .onAppear { analyzer.start() }
-        .onDisappear { analyzer.stop() }
+        .onAppear {
+            analyzer.start()
+            spectrum.start(feed: spectrumFeed)
+        }
+        .onDisappear {
+            spectrum.stop()
+            analyzer.stop()
+        }
+        .onChange(of: analyzer.isMono, initial: true) { _, m in spectrum.settings.inputMono = m && !isDemo }
     }
 
     // MARK: Header
@@ -141,6 +154,32 @@ struct InputAnalyzerView: View {
         guard let f = analyzer.offsetFrames else { return "Needs timecode on both" }
         if f == 0 { return "In sync" }
         return "\(f > 0 ? "+" : "−")\(abs(f)) frame\(abs(f) == 1 ? "" : "s")"
+    }
+
+    // MARK: Spectrum
+
+    private var isDemo: Bool {
+        #if DEBUG
+        return SpectrumDemoFeed.isOn
+        #else
+        return false
+        #endif
+    }
+
+    private var spectrumFeed: SpectrumFeed {
+        #if DEBUG
+        if isDemo { return demoFeed }
+        #endif
+        return analyzer.core
+    }
+
+    private func spectrumPanel(wide: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Input spectrum").font(Theme.sectionHeader).foregroundStyle(Theme.textSecondary)
+            SpectrumPanel(engine: spectrum, offersOutput: false, wide: wide, ownHold: true,
+                          plotHeight: wide ? 360 : 280, kind: $spectrumKind)
+        }
+        .panel(padding: isPad ? 16 : 12)
     }
 
     // MARK: Scope

@@ -82,7 +82,7 @@ final class InputAnalyzer: VisualsDataSource {
 
     // MARK: Control
 
-    @ObservationIgnored private let core = AnalyzerCore()
+    @ObservationIgnored let core = AnalyzerCore()
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var cachedSnap: AnalysisSnapshot?
     @ObservationIgnored private var lastSnapAt: CFTimeInterval = 0
@@ -136,7 +136,8 @@ final class InputAnalyzer: VisualsDataSource {
 
 /// Drains the input ring on its own thread. Main thread reads results under a lock.
 final class AnalyzerCore: @unchecked Sendable {
-    static let historyLength = 4096
+    /// Long enough for the spectrum analyser's largest FFT.
+    static let historyLength = 32_768
     let ring = SPSCRingBuffer(channels: 2, minimumCapacity: 192_000)
 
     private let lock = OSAllocatedUnfairLock()
@@ -288,6 +289,32 @@ final class AnalyzerCore: @unchecked Sendable {
             if pl >= 0.999 { clipL = true }
             if pr >= 0.999 { clipR = true }
         }
+    }
+}
+
+extension AnalyzerCore: SpectrumFeed {
+    /// The newest `count` input frames (spectrum analyser worker thread). Input only.
+    func spectrumRead(count: Int, shiftSeconds: Double, into b: SpectrumBuffers) -> SpectrumFeedState {
+        let n = min(count, Self.historyLength, b.capacity)
+        var st = SpectrumFeedState()
+        lock.withLock {
+            st.sampleRate = rate
+            st.inputFrames = histWrite > 0 ? histWrite : nil
+            guard n > 0 else { return }
+            let mask = Self.historyLength - 1
+            let avail = min(n, histWrite)
+            let pad = n - avail
+            b.inL.withUnsafeMutableBufferPointer { l in
+                b.inR.withUnsafeMutableBufferPointer { r in
+                    for i in 0..<pad { l[i] = 0; r[i] = 0 }
+                    for i in 0..<avail {
+                        let idx = (histWrite &- avail &+ i) & mask
+                        l[pad + i] = histL[idx]; r[pad + i] = histR[idx]
+                    }
+                }
+            }
+        }
+        return st
     }
 }
 
