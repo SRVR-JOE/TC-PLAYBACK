@@ -225,7 +225,7 @@ struct OutputTestView: View {
                         Picker("Narrator", selection: Binding(get: { tester.selectedVoiceID ?? "" },
                                                               set: { tester.selectedVoiceID = $0 })) {
                             ForEach(tester.voices) { v in
-                                Text("\(v.name) (\(v.regionLabel), \(v.qualityLabel))").tag(v.id)
+                                Text(v.studioKey != nil ? "\(v.name) · \(v.character)" : "\(v.name) (\(v.regionLabel), \(v.qualityLabel))").tag(v.id)
                             }
                         }
                     } label: {
@@ -234,7 +234,7 @@ struct OutputTestView: View {
                                 Text(tester.selectedVoice?.name ?? "Choose a voice")
                                     .font(.system(size: 16, weight: .medium)).foregroundStyle(Theme.textPrimary)
                                 if let v = tester.selectedVoice {
-                                    Text("English (\(v.regionLabel)) · \(v.qualityLabel)")
+                                    Text(v.studioKey != nil ? "\(v.character) · English (\(v.regionLabel))" : "English (\(v.regionLabel)) · \(v.qualityLabel)")
                                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                                 }
                             }
@@ -247,7 +247,7 @@ struct OutputTestView: View {
                         .background(Theme.surfaceSunken, in: RoundedRectangle(cornerRadius: Theme.corner))
                         .overlay(RoundedRectangle(cornerRadius: Theme.corner).strokeBorder(Theme.hairline, lineWidth: 1))
                     }
-                    Text("Calm, slow documentary narration. Renders once per voice, then plays from memory.")
+                    Text(tester.selectedVoice?.studioKey != nil ? "Studio-mastered voice, the same on every device." : "Calm, slow documentary narration. Renders once per voice, then plays from memory.")
                         .font(Theme.caption).foregroundStyle(Theme.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                     Button { run(.ident(.both)) } label: {

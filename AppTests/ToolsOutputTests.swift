@@ -128,4 +128,20 @@ final class ToolsOutputTests: XCTestCase {
         let (again, _) = try await tester.identFile(.left)
         XCTAssertEqual(again, url)
     }
+
+    func testFiveStudioVoicesShipAndDecode() throws {
+        let voices = VoiceIdentRenderer.availableVoices()
+        XCTAssertEqual(voices.count, 5)
+        XCTAssertTrue(voices.allSatisfy { $0.studioKey != nil })
+        XCTAssertTrue(VoiceIdentRenderer.hasRichVoice(in: voices))
+        for v in voices {
+            for side in OutputSide.allCases {
+                let m = try VoiceIdentRenderer.loadStudio(v.studioKey!, side: side)
+                let secs = Double(m.count) / TestSignals.sampleRate
+                XCTAssertGreaterThan(secs, 3, "\(v.name) \(side)")
+                XCTAssertLessThan(secs, 7, "\(v.name) \(side)")
+                XCTAssertEqual(TestSignals.peak(m), TestSignals.dbToLinear(-6), accuracy: 0.01)
+            }
+        }
+    }
 }

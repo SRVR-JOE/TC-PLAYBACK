@@ -8,9 +8,13 @@ struct VoiceOption: Identifiable, Hashable {
     let language: String
     let quality: AVSpeechSynthesisVoiceQuality
     let isMale: Bool
+    /// Studio voices ship inside the app as mastered recordings ("studio.<key>").
+    var studioKey: String? = nil
+    var character: String = ""
 
     var qualityLabel: String {
-        switch quality {
+        if studioKey != nil { return "Studio" }
+        return switch quality {
         case .premium: "Premium"
         case .enhanced: "Enhanced"
         default: "Standard"
@@ -32,7 +36,17 @@ struct VoiceOption: Identifiable, Hashable {
 /// Picks and renders the calm, slow, low British narrator-style idents. Generic style only.
 enum VoiceIdentRenderer {
     /// Bump when the script, tuning or processing changes so cached renders are rebuilt.
-    static let renderVersion = "v3"
+    static let renderVersion = "v4"
+
+    /// The five studio voices bundled with the app: neural recordings, then EQ, de-essing,
+    /// compression, a short room and loudness mastering (−16 LUFS, −1.5 dBTP). Same on every device.
+    static let studioVoices: [VoiceOption] = [
+        .init(id: "studio.george", name: "George", language: "en-GB", quality: .premium, isMale: true, studioKey: "george", character: "Low, calm British narrator"),
+        .init(id: "studio.heart", name: "Harper", language: "en-US", quality: .premium, isMale: false, studioKey: "heart", character: "Warm and clear"),
+        .init(id: "studio.michael", name: "Marcus", language: "en-US", quality: .premium, isMale: true, studioKey: "michael", character: "Deep American announcer"),
+        .init(id: "studio.emma", name: "Emma", language: "en-GB", quality: .premium, isMale: false, studioKey: "emma", character: "Crisp British"),
+        .init(id: "studio.bella", name: "Bella", language: "en-US", quality: .premium, isMale: false, studioKey: "bella", character: "Bright and punchy"),
+    ]
 
     // Delivery tuning: unhurried, low and warm.
     static let speechRate: Float = 0.42
@@ -41,6 +55,17 @@ enum VoiceIdentRenderer {
     // MARK: Voice choice
 
     static func availableVoices() -> [VoiceOption] {
+        let studio = studioVoices.filter { v in OutputSide.allCases.allSatisfy { studioURL(v.studioKey!, $0) != nil } }
+        if !studio.isEmpty { return studio }
+        return deviceVoices()
+    }
+
+    static func studioURL(_ key: String, _ side: OutputSide) -> URL? {
+        Bundle.main.url(forResource: "voice-\(key)-\(side.rawValue)", withExtension: "m4a")
+    }
+
+    /// Installed system voices: the fallback if the bundled recordings are missing.
+    static func deviceVoices() -> [VoiceOption] {
         AVSpeechSynthesisVoice.speechVoices()
             .filter { $0.language.hasPrefix("en") }
             .filter { !$0.identifier.contains("speech.synthesis") }   // novelty voices
@@ -72,7 +97,8 @@ enum VoiceIdentRenderer {
 
     /// True when an Enhanced or Premium English (UK) voice is installed.
     static func hasRichVoice(in voices: [VoiceOption]) -> Bool {
-        voices.contains { $0.language == "en-GB" && $0.quality != .default && !$0.id.contains("eloquence") }
+        if voices.contains(where: { $0.studioKey != nil }) { return true }
+        return voices.contains { $0.language == "en-GB" && $0.quality != .default && !$0.id.contains("eloquence") }
     }
 
     // MARK: Script
@@ -112,6 +138,7 @@ enum VoiceIdentRenderer {
 
     /// Render a side's ident as processed mono at 48 kHz, peak −6 dBFS.
     static func renderMono(side: OutputSide, voiceID: String) async throws -> [Float] {
+        if voiceID.hasPrefix("studio.") { return try loadStudio(String(voiceID.dropFirst(7)), side: side) }
         guard let voice = AVSpeechSynthesisVoice(identifier: voiceID) else { throw RenderError.noVoice }
         var dry: [Float] = []
         for part in script(for: side) {
@@ -127,6 +154,22 @@ enum VoiceIdentRenderer {
         var wet = (try? applyRoom(dry)) ?? dry
         normalize(&wet, peakDBFS: -6)
         return wet
+    }
+
+    /// Decode a bundled studio recording to mono at the test-signal rate, peak −6 dBFS.
+    static func loadStudio(_ key: String, side: OutputSide) throws -> [Float] {
+        guard let url = studioURL(key, side) else { throw RenderError.noVoice }
+        let f = try AVAudioFile(forReading: url)
+        let fmt = f.processingFormat
+        guard let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(f.length)) else { throw RenderError.noAudio }
+        try f.read(into: buf)
+        guard let ch = buf.floatChannelData, buf.frameLength > 0 else { throw RenderError.noAudio }
+        let n = Int(buf.frameLength), chans = Int(fmt.channelCount)
+        var mono = [Float](repeating: 0, count: n)
+        for c in 0..<chans { for i in 0..<n { mono[i] += ch[c][i] / Float(chans) } }
+        mono = try resample(mono, from: fmt.sampleRate)
+        normalize(&mono, peakDBFS: -6)
+        return mono
     }
 
     /// Speak `text` into memory and return float mono at 48 kHz.
