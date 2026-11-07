@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import Observation
 import QuartzCore
+import os
 import TCKit
 
 // CONTRACT FILE — owned by the AUDIO ENGINE agent. Every `public`/internal declaration in
@@ -149,6 +150,11 @@ final class PlaybackEngine {
     private(set) var interruptionLog: [String] = []
     /// Buffer underruns (audible dropouts) since the item was loaded.
     private(set) var dropoutCount: Int = 0
+    /// Device input currently captured (for the Input Analyzer); nil when the input is closed.
+    private(set) var inputInfo: InputInfo?
+    struct InputInfo: Equatable { var name: String; var sampleRate: Double; var channels: Int }
+    /// Set when the input couldn't be opened (permission off / no input). Cleared on success.
+    private(set) var inputProblem: String?
 
     // MARK: Internals (not observed)
     @ObservationIgnored private var graph: AudioGraph?
@@ -172,6 +178,8 @@ final class PlaybackEngine {
     @ObservationIgnored private var cachedPeaks: (sl: Float, sr: Float, ol: Float, or: Float) = (0, 0, 0, 0)
     @ObservationIgnored private var lastPeakTake: CFTimeInterval = 0
     @ObservationIgnored private var inputEngine: AVAudioEngine?
+    @ObservationIgnored private let tapTargets = InputTapTargets()
+    @ObservationIgnored private var analysisSinks = 0
     @ObservationIgnored private var wasPlayingBeforeInterruption = false
     @ObservationIgnored private var routeAtPlay: String = ""
     @ObservationIgnored private var lastNowPlayingSecond = -1
@@ -605,9 +613,9 @@ final class PlaybackEngine {
         case .ended:
             let optRaw = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
             let shouldResume = AVAudioSession.InterruptionOptions(rawValue: optRaw).contains(.shouldResume)
-            configureSession(record: readExternalInput)
+            configureSession(record: wantsInput)
             restartAfterSystemStop()
-            if readExternalInput { restartInputEngine() }
+            if wantsInput { restartInputEngine() }
             if shouldResume && wasPlayingBeforeInterruption {
                 play()
                 log("Interruption ended · resumed on \(outputRouteName)")
@@ -666,9 +674,9 @@ final class PlaybackEngine {
     private func handleMediaServicesReset() {
         log("Audio system reset")
         teardownGraph()
-        configureSession(record: readExternalInput)
+        configureSession(record: wantsInput)
         rebuildPreservingPosition(resume: false)
-        if readExternalInput { restartInputEngine() }
+        if wantsInput { restartInputEngine() }
         lastError = "The audio system was reset. Playback is paused — press GO to resume."
     }
 
@@ -710,24 +718,53 @@ final class PlaybackEngine {
 
     // MARK: - External input
 
+    private var wantsInput: Bool { readExternalInput || analysisSinks > 0 }
+
+    /// Additive: an extra consumer of the device input (the Input Analyzer). The ring receives
+    /// every input buffer (1 or 2 channels at `inputInfo.sampleRate`) while attached. Capture
+    /// runs while either this or `readExternalInput` wants it; the show clock is not affected.
+    func attachInputAnalysis(_ ring: SPSCRingBuffer) {
+        tapTargets.setAnalysis(ring)
+        analysisSinks = 1
+        updateInputCapture()
+    }
+
+    func detachInputAnalysis() {
+        tapTargets.setAnalysis(nil)
+        analysisSinks = 0
+        updateInputCapture()
+    }
+
     private func externalInputChanged() {
+        if !readExternalInput { followedExternal = nil }
+        updateInputCapture()
+    }
+
+    private func updateInputCapture() {
         ensureSetup()
-        if readExternalInput {
-            AVAudioApplication.requestRecordPermission { [weak self] granted in
-                DispatchQueue.main.async {
-                    guard let self, self.readExternalInput else { return }
-                    if granted {
-                        self.startInput()
-                    } else {
-                        self.lastError = "Microphone access is off. Allow it in Settings › TC Playback to read timecode from the input."
+        guard wantsInput else {
+            stopInput()
+            configureSession(record: false)
+            return
+        }
+        if inputEngine != nil {
+            applyMonitorInput()
+            return
+        }
+        AVAudioApplication.requestRecordPermission { [weak self] granted in
+            DispatchQueue.main.async {
+                guard let self, self.wantsInput else { return }
+                if granted {
+                    self.startInput()
+                } else {
+                    let msg = "Microphone access is off. Allow it in Settings › TC Playback to use the audio input."
+                    self.inputProblem = msg
+                    if self.readExternalInput {
+                        self.lastError = msg
                         self.readExternalInput = false
                     }
                 }
             }
-        } else {
-            stopInput()
-            configureSession(record: false)
-            followedExternal = nil
         }
     }
 
@@ -739,31 +776,49 @@ final class PlaybackEngine {
         restartInputEngine()
     }
 
+    /// The monitor follows the input only when the operator asked to read TC from it.
+    private func applyMonitorInput() {
+        if readExternalInput, let ring = tapTargets.monitorRing, let info = inputInfo {
+            tapTargets.monitorEnabled = true
+            monitor?.setExternalInput(ring, sampleRate: info.sampleRate)
+        } else {
+            tapTargets.monitorEnabled = false
+            monitor?.setExternalInput(nil, sampleRate: 0)
+        }
+    }
+
     private func restartInputEngine() {
         stopInput()
         let ie = AVAudioEngine()
         let input = ie.inputNode
         let fmt = input.outputFormat(forBus: 0)
         guard fmt.channelCount > 0, fmt.sampleRate > 0 else {
-            lastError = "No audio input is available to read timecode from."
+            inputProblem = "No audio input is available."
+            if readExternalInput { lastError = "No audio input is available to read timecode from." }
             return
         }
         let ring = SPSCRingBuffer(channels: min(2, Int(fmt.channelCount)), minimumCapacity: Int(fmt.sampleRate))
+        tapTargets.monitorRing = ring
+        let targets = tapTargets
         input.installTap(onBus: 0, bufferSize: 1024, format: fmt) { buffer, _ in
             guard let ch = buffer.floatChannelData else { return }
-            let n = Int(buffer.frameLength)
-            ring.write(UnsafePointer(ch[0]), buffer.format.channelCount > 1 ? UnsafePointer(ch[1]) : nil, count: n)
+            targets.deliver(ch[0], buffer.format.channelCount > 1 ? ch[1] : nil, count: Int(buffer.frameLength))
         }
         do {
             try ie.start()
         } catch {
             input.removeTap(onBus: 0)
-            lastError = "The audio input couldn't be started."
+            tapTargets.monitorRing = nil
+            inputProblem = "The audio input couldn't be started."
+            if readExternalInput { lastError = "The audio input couldn't be started." }
             return
         }
         inputEngine = ie
-        monitor?.setExternalInput(ring, sampleRate: fmt.sampleRate)
-        log("Reading timecode from \(AudioRoutes.inputName(for: AVAudioSession.sharedInstance().currentRoute))")
+        let name = AudioRoutes.inputName(for: AVAudioSession.sharedInstance().currentRoute)
+        inputInfo = InputInfo(name: name, sampleRate: fmt.sampleRate, channels: Int(fmt.channelCount))
+        inputProblem = nil
+        applyMonitorInput()
+        log("Audio input open: \(name)")
     }
 
     private func stopInput() {
@@ -772,7 +827,35 @@ final class PlaybackEngine {
             ie.stop()
         }
         inputEngine = nil
+        inputInfo = nil
+        tapTargets.monitorEnabled = false
+        tapTargets.monitorRing = nil
         monitor?.setExternalInput(nil, sampleRate: 0)
+    }
+}
+
+/// Where the input tap sends audio. The tap runs on an AVAudioEngine I/O thread (not the
+/// render callback), so a short unfair lock is fine here.
+final class InputTapTargets: @unchecked Sendable {
+    private let lock = OSAllocatedUnfairLock()
+    private var _monitorRing: SPSCRingBuffer?
+    private var _monitorEnabled = false
+    private var _analysis: SPSCRingBuffer?
+
+    var monitorRing: SPSCRingBuffer? {
+        get { lock.withLock { _monitorRing } }
+        set { lock.withLock { _monitorRing = newValue } }
+    }
+    var monitorEnabled: Bool {
+        get { lock.withLock { _monitorEnabled } }
+        set { lock.withLock { _monitorEnabled = newValue } }
+    }
+    func setAnalysis(_ ring: SPSCRingBuffer?) { lock.withLock { _analysis = ring } }
+
+    func deliver(_ l: UnsafePointer<Float>, _ r: UnsafePointer<Float>?, count: Int) {
+        let (m, a) = lock.withLock { (_monitorEnabled ? _monitorRing : nil, _analysis) }
+        if let m { _ = m.write(l, r, count: count) }
+        if let a { _ = a.write(l, r, count: count) }
     }
 }
 

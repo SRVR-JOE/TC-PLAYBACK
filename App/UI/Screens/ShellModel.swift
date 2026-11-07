@@ -39,6 +39,7 @@ final class ShellModel {
     /// iPad tool screens (slots for the Pads / Output test screens).
     var showPads = false
     var showOutputTest = false
+    var showInputAnalyzer = false
     var banner: ShellBanner?
     /// Cue whose number is being edited inline in the list.
     var editingNumberCueID: UUID?
