@@ -50,18 +50,32 @@ struct ShowScreen: View {
             VStack(spacing: 10) {
                 ClockPanel().frame(height: max(150, geo.size.height * (tall ? 0.22 : 0.27)))
                 WaveformPanel(height: 64)
-                HStack(spacing: 10) {
-                    ScopePanel(mode: $scopeMode).frame(maxWidth: .infinity)
-                    MeterPanel(axis: .vertical).frame(width: narrow ? 88 : 104)
-                    RoutingPanel()
-                        .frame(maxHeight: .infinity, alignment: .top)
-                        .panel()
-                        .frame(width: min(340, geo.size.width * 0.44))
+                if tall {
+                    // Portrait: routing + horizontal meters in one row, scope full width below.
+                    HStack(alignment: .top, spacing: 10) {
+                        RoutingPanel()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                            .panel()
+                        MeterPanel(axis: .horizontal).frame(width: geo.size.width * 0.34)
+                    }
+                    .frame(height: 230)
+                    ScopePanel(mode: $scopeMode).frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    HStack(spacing: 10) {
+                        ScopePanel(mode: $scopeMode).frame(minWidth: 0, maxWidth: .infinity)
+                        MeterPanel(axis: .vertical).frame(width: narrow ? 88 : 104)
+                        RoutingPanel()
+                            .frame(maxHeight: .infinity, alignment: .top)
+                            .panel()
+                            .frame(width: min(340, geo.size.width * 0.44))
+                    }
+                    .frame(maxHeight: .infinity)
                 }
-                .frame(maxHeight: .infinity)
                 TransportBar(layout: narrow ? .compact : .regular).panel(padding: 10)
             }
             .padding(12)
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
         }
     }
 
@@ -86,6 +100,8 @@ struct ShowScreen: View {
                 TransportBar(layout: geo.size.width < 860 ? .compact : .regular).panel(padding: 10)
             }
             .padding(12)
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
         }
     }
 
@@ -116,6 +132,8 @@ struct ShowScreen: View {
                 TransportBar(layout: geo.size.width < 860 ? .compact : .regular).panel(padding: 10)
             }
             .padding(12)
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
         }
     }
 
@@ -162,7 +180,6 @@ struct ShowScreen: View {
             }
             .buttonStyle(.plain)
             if phoneScopeOpen {
-                ScopeModePicker(mode: $scopeMode)
                 OscilloscopeView(mode: $scopeMode)
                     .frame(height: 160)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
@@ -270,7 +287,7 @@ struct ScopePanel: View {
     @Binding var mode: OscilloscopeView.Mode
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionHeader("Scope") { ScopeModePicker(mode: $mode) }
+            SectionHeader("Scope") { EmptyView() }
             OscilloscopeView(mode: $mode)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))

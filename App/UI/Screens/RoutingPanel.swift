@@ -124,8 +124,9 @@ struct ChannelStrip: View {
         HStack(spacing: 5) {
             IndicatorLamp(color: Theme.stop, isOn: !enabled, size: 7)
             Text("Muted").font(Theme.caption)
-                .foregroundStyle(enabled ? Theme.textTertiary.opacity(0.45) : Theme.stop)
+                .foregroundStyle(Theme.stop)
         }
+        .opacity(enabled ? 0 : 1)
         .accessibilityHidden(enabled)
     }
 

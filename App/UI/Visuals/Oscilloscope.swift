@@ -125,6 +125,11 @@ struct OscilloscopeContent: View {
                 HStack(spacing: 8) { modePicker; Spacer(minLength: 4); runStop }
                 HStack(spacing: 8) { triggerControls; Spacer(minLength: 4); gainButton; timebaseControl }
             }
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) { modePicker; Spacer(minLength: 4); runStop }
+                HStack(spacing: 8) { triggerControls; Spacer(minLength: 4); gainButton }
+                HStack(spacing: 8) { Spacer(minLength: 0); timebaseControl }
+            }
         }
         .font(Theme.caption)
     }
@@ -159,6 +164,8 @@ struct OscilloscopeContent: View {
             .buttonStyle(VisualsKeyStyle())
             .accessibilityLabel(slope == .rising ? "Rising edge" : "Falling edge")
         }
+        .lineLimit(1)
+        .fixedSize()
         .disabled(mode == .xy || mode == .eye)
     }
 
@@ -170,6 +177,8 @@ struct OscilloscopeContent: View {
             }
         }
         .buttonStyle(VisualsKeyStyle(isOn: autoGain))
+        .lineLimit(1)
+        .fixedSize()
         .accessibilityValue(autoGain ? "On" : "Off")
     }
 

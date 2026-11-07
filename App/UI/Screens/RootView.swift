@@ -81,6 +81,18 @@ struct RootView: View {
         shell.engine.onRemoteNext = { ShowController.shared.next() }
         shell.engine.onRemotePrevious = { ShowController.shared.previous() }
         shell.engine.remoteTransportLocked = showLock
+        #if DEBUG
+        // -autoGo: fire the standby cue after the demo tracks are ready (screenshots/QA only).
+        if ProcessInfo.processInfo.arguments.contains("-autoGo") {
+            Task { @MainActor in
+                for _ in 0..<40 where !(shell.standbyCue?.track.map { FileManager.default.fileExists(atPath: $0.fileURL.path) } ?? false) {
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+                try? await Task.sleep(for: .seconds(1))
+                shell.go()
+            }
+        }
+        #endif
     }
 
     private func openLastPlaylist() {
@@ -107,6 +119,17 @@ private struct PadRoot: View {
     private var layout: LayoutMode { LayoutMode(rawValue: layoutRaw) ?? .console }
 
     var body: some View {
+        GeometryReader { geo in
+            content
+                .onChange(of: geo.size.width > geo.size.height, initial: true) { _, landscape in
+                    // Portrait: the sidebar would overlay the detail, so start detail-only
+                    // (sidebar button still reveals it). Landscape: both columns side by side.
+                    columns = landscape ? .all : .detailOnly
+                }
+        }
+    }
+
+    @ViewBuilder private var content: some View {
         if layout.showsSidebar {
             NavigationSplitView(columnVisibility: $columns) {
                 CueListView()

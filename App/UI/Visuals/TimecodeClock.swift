@@ -274,7 +274,7 @@ struct ClockStatusLine: View {
                 }
                 .foregroundStyle(VisualsColor.primary)
             }
-            if source {
+            if source, state != .trackTime {
                 divider
                 Text(VisualsFormat.sourceLabel(clock.source))
             }
