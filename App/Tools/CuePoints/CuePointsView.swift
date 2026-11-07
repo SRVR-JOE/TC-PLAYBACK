@@ -18,6 +18,10 @@ struct CuePointsView: View {
     @State private var startText = ""
     @State private var lastMarkID: UUID?
     @FocusState private var focusedName: UUID?
+    @State private var peaks: [Float] = []
+    @State private var selected: UUID?
+    @State private var saveTask: Task<Void, Never>?
+    @State private var span: TimeInterval = 30
 
     private let engine = PlaybackEngine.shared
     private var isPad: Bool { hSize == .regular }
@@ -26,17 +30,44 @@ struct CuePointsView: View {
     struct ExportFile: Identifiable { let id = UUID(); let title: String; let detail: String; let url: URL }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if let track {
-                if blocked { blockedBanner }
-                header(track)
-                waveform(track)
-                transport
-                list
-            } else {
-                ContentUnavailableView("No tracks yet", systemImage: "waveform",
-                                       description: Text("Import a track, then come back to mark cue points."))
+        GeometryReader { geo in
+            let wide = geo.size.width > 900
+            VStack(spacing: 0) {
+                if let track {
+                    if blocked { blockedBanner }
+                    if wide {
+                        // Editor layout: monitor | inspector on top, full-width timeline below.
+                        HStack(alignment: .top, spacing: Theme.pad) {
+                            VStack(spacing: 10) {
+                                header(track)
+                                TriggerReadout(points: points, clock: clock, playhead: engine.currentTime,
+                                               isPlaying: engine.transport == .playing, large: true)
+                                transport
+                            }
+                            .frame(maxWidth: .infinity)
+                            inspectorPanel.frame(width: min(420, geo.size.width * 0.36))
+                        }
+                        .padding(Theme.pad)
+                        .frame(height: geo.size.height * 0.5)
+                        timelineBar(track)
+                        timeline(track).frame(maxHeight: .infinity)
+                            .padding([.horizontal, .bottom], Theme.pad)
+                    } else {
+                        header(track)
+                        TriggerReadout(points: points, clock: clock, playhead: engine.currentTime,
+                                       isPlaying: engine.transport == .playing)
+                            .padding(.horizontal, Theme.pad)
+                        timelineBar(track)
+                        timeline(track).frame(height: 170).padding(.horizontal, Theme.pad)
+                        transport
+                        inspectorPanel.padding(.horizontal, Theme.pad).padding(.bottom, 6)
+                    }
+                } else {
+                    ContentUnavailableView("No tracks yet", systemImage: "waveform",
+                                           description: Text("Import a track, then come back to mark cue points."))
+                }
             }
+            .background { shortcuts }
         }
         .background(Theme.background.ignoresSafeArea())
         .toolbar {
@@ -89,35 +120,146 @@ struct CuePointsView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Start timecode \(clock.start.description). Edit")
         }
-        .padding(.horizontal, Theme.pad).padding(.vertical, 10)
+        .padding(.horizontal, isPad ? 0 : Theme.pad).padding(.vertical, isPad ? 0 : 10)
     }
 
-    // MARK: Waveform + markers
+    // MARK: Timeline
 
-    private func waveform(_ track: Track) -> some View {
-        WaveformOverviewView(overview: track.overview, channelCount: track.channelCount,
-                             duration: track.duration, scrubEnabled: loaded)
-            .frame(height: isPad ? 120 : 84)
-            .overlay {
-                GeometryReader { geo in
-                    ForEach(points) { p in
-                        let x = geo.size.width * CGFloat(track.duration > 0 ? p.time / track.duration : 0)
-                        let color = Color(hexString: p.colorHex ?? "") ?? Theme.standby
-                        Rectangle().fill(color)
-                            .frame(width: 1.5, height: geo.size.height)
-                            .position(x: x, y: geo.size.height / 2)
-                            .allowsHitTesting(false)
-                        Text("\(number(of: p))")
-                            .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(Theme.background)
-                            .padding(.horizontal, 3)
-                            .background(color, in: RoundedRectangle(cornerRadius: 2))
-                            .position(x: min(max(x, 8), geo.size.width - 8), y: 7)
-                            .onTapGesture { jump(to: p) }
-                    }
-                }
+    private func timeline(_ track: Track) -> some View {
+        TimelineEditor(duration: track.duration, peaks: peaks, points: points, clock: clock,
+                       playhead: engine.currentTime, isPlaying: engine.transport == .playing,
+                       selected: $selected,
+                       onSeek: { if loaded { engine.seek(to: $0) } },
+                       onMove: move, span: $span)
+            .id(track.id)
+    }
+
+    /// Editor-style strip above the timeline: playhead TC, marker count, zoom slider.
+    private func timelineBar(_ track: Track) -> some View {
+        HStack(spacing: 12) {
+            Text("Timeline").font(Theme.sectionHeader).foregroundStyle(Theme.textSecondary)
+            Text("\(points.count) mark\(points.count == 1 ? "" : "s")").font(Theme.caption).foregroundStyle(Theme.textTertiary)
+            Spacer()
+            Button { zoom(2) } label: { Image(systemName: "minus.magnifyingglass") }
+                .buttonStyle(.plain).foregroundStyle(Theme.textSecondary).accessibilityLabel("Zoom out")
+            Slider(value: Binding(get: { zoomValue(track) }, set: { setZoom($0, track) }), in: 0...1)
+                .frame(width: isPad ? 220 : 120)
+                .tint(Theme.textSecondary)
+                .accessibilityLabel("Zoom")
+            Button { zoom(0.5) } label: { Image(systemName: "plus.magnifyingglass") }
+                .buttonStyle(.plain).foregroundStyle(Theme.textSecondary).accessibilityLabel("Zoom in")
+            Button { span = max(2, track.duration) } label: { Text("Fit").font(Theme.label) }
+                .buttonStyle(.plain).foregroundStyle(Theme.textSecondary).accessibilityLabel("Zoom to fit")
+        }
+        .padding(.horizontal, Theme.pad).padding(.vertical, 8)
+    }
+
+    /// Slider 0 = whole track, 1 = 2 seconds (log scale, like an editor's zoom).
+    private func zoomValue(_ track: Track) -> Double {
+        let maxSpan = max(2.0, track.duration)
+        guard maxSpan > 2 else { return 0 }
+        return 1 - log(span / 2) / log(maxSpan / 2)
+    }
+    private func setZoom(_ v: Double, _ track: Track) {
+        let maxSpan = max(2.0, track.duration)
+        span = 2 * pow(maxSpan / 2, 1 - v)
+    }
+    private func zoom(_ f: Double) {
+        guard let track else { return }
+        span = min(max(2, span * f), max(2, track.duration))
+    }
+
+    // MARK: Inspector
+
+    @ViewBuilder private var inspectorPanel: some View {
+        VStack(spacing: 0) {
+            if let p = points.first(where: { $0.id == selected }) {
+                inspector(p)
+                Rectangle().fill(Theme.hairline).frame(height: 1)
             }
-            .padding(.horizontal, Theme.pad)
+            list
+        }
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.cornerLarge))
+        .overlay(RoundedRectangle(cornerRadius: Theme.cornerLarge).strokeBorder(Theme.hairline, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerLarge))
+    }
+
+    private func inspector(_ p: CuePoint) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text("Mark \(number(of: p))").font(Theme.sectionHeader).foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Button(role: .destructive) { delete(p) } label: { Image(systemName: "trash") }
+                    .buttonStyle(.plain).foregroundStyle(Theme.stop).accessibilityLabel("Delete mark")
+            }
+            TextField("Name", text: Binding(get: { p.name }, set: { p.name = $0; scheduleSave() }))
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .submitLabel(.done)
+            HStack(spacing: 6) {
+                stepButton("−1s") { shift(p, by: -1) }
+                stepButton("−1f") { shift(p, by: -1 / clock.rate.fps) }
+                Button { jump(to: p) } label: {
+                    Text(clock.timecode(at: p.time).description).font(Theme.numeric(17)).foregroundStyle(Theme.textPrimary)
+                        .frame(maxWidth: .infinity, minHeight: 34)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Go to \(clock.timecode(at: p.time).description)")
+                stepButton("+1f") { shift(p, by: 1 / clock.rate.fps) }
+                stepButton("+1s") { shift(p, by: 1) }
+            }
+            HStack(spacing: 8) {
+                ForEach(CuePointColor.allCases) { c in
+                    let on = (p.colorHex ?? CuePointColor.amber.rawValue) == c.rawValue
+                    Button { p.colorHex = c.rawValue; save() } label: {
+                        Circle().fill(Color(hexString: c.rawValue) ?? .white)
+                            .frame(width: 22, height: 22)
+                            .overlay(Circle().strokeBorder(on ? Theme.textPrimary : .clear, lineWidth: 2).padding(-3))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(c.label)
+                    .accessibilityAddTraits(on ? .isSelected : [])
+                }
+                Spacer()
+                Button("Move to playhead") { p.time = snapped(engine.currentTime); save() }
+                    .font(Theme.caption.weight(.medium)).disabled(!loaded)
+            }
+        }
+        .padding(14)
+    }
+
+    private func stepButton(_ label: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label).font(Theme.numeric(12, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                .frame(width: 40, height: 34)
+                .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 4))
+                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Theme.hairline, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Keyboard (Premiere-style)
+
+    /// Invisible buttons carrying the editor shortcuts: M mark, Space play, J/K/L, ←/→ one frame
+    /// (⇧ ten), ↑/↓ previous/next mark, Delete removes the selected mark, = and − zoom.
+    private var shortcuts: some View {
+        Group {
+            Button("") { mark() }.keyboardShortcut("m", modifiers: [])
+            Button("") { togglePlay() }.keyboardShortcut(.space, modifiers: [])
+            Button("") { nudgePlayhead(-5) }.keyboardShortcut("j", modifiers: [])
+            Button("") { if loaded { engine.pause() } }.keyboardShortcut("k", modifiers: [])
+            Button("") { if loaded { engine.play() } }.keyboardShortcut("l", modifiers: [])
+            Button("") { frameStep(-1) }.keyboardShortcut(.leftArrow, modifiers: [])
+            Button("") { frameStep(1) }.keyboardShortcut(.rightArrow, modifiers: [])
+            Button("") { frameStep(-10) }.keyboardShortcut(.leftArrow, modifiers: .shift)
+            Button("") { frameStep(10) }.keyboardShortcut(.rightArrow, modifiers: .shift)
+            Button("") { stepPoint(-1) }.keyboardShortcut(.upArrow, modifiers: [])
+            Button("") { stepPoint(1) }.keyboardShortcut(.downArrow, modifiers: [])
+            Button("") { if let p = points.first(where: { $0.id == selected }) { delete(p) } }.keyboardShortcut(.delete, modifiers: [])
+            Button("") { zoom(0.5) }.keyboardShortcut("=", modifiers: [])
+            Button("") { zoom(2) }.keyboardShortcut("-", modifiers: [])
+        }
+        .opacity(0).allowsHitTesting(false).accessibilityHidden(true)
     }
 
     // MARK: Transport
@@ -128,7 +270,6 @@ struct CuePointsView: View {
             key("gobackward.5", "Back 5 seconds") { nudgePlayhead(-5) }
             key(engine.transport == .playing ? "pause.fill" : "play.fill",
                 engine.transport == .playing ? "Pause" : "Play") { togglePlay() }
-                .keyboardShortcut(.space, modifiers: [])
             key("goforward.5", "Forward 5 seconds") { nudgePlayhead(5) }
             key("forward.end", "Next point") { stepPoint(1) }
             Button(action: mark) {
@@ -141,7 +282,6 @@ struct CuePointsView: View {
                 .background(Theme.standby, in: RoundedRectangle(cornerRadius: Theme.corner))
             }
             .buttonStyle(KeyPressStyle())
-            .keyboardShortcut("m", modifiers: [])
             .disabled(!loaded)
             .accessibilityHint("Adds a cue point at the playhead. Keyboard: M")
         }
@@ -171,7 +311,7 @@ struct CuePointsView: View {
                     .font(Theme.label).foregroundStyle(Theme.textSecondary)
                     .listRowBackground(Theme.surface)
             }
-            ForEach(points) { p in row(p).listRowBackground(Theme.surface) }
+            ForEach(points) { p in row(p).listRowBackground(p.id == selected ? Theme.surfaceRaised : Theme.surface) }
                 .onDelete { idx in
                     for i in idx { context.delete(points[i]) }
                     save()
@@ -299,6 +439,9 @@ struct CuePointsView: View {
         guard let track else { return }
         clock = CuePointClock.forTrack(track)
         reload()
+        peaks = []
+        let url = track.fileURL, ch = track.ltcChannel == "left" ? 1 : 0
+        Task { let p = await TimelinePeaks.load(url: url, channel: ch); if self.track?.fileURL == url { peaks = p } }
         if engine.transport == .playing, !loaded { blocked = true; return }
         blocked = false
         guard !loaded, !track.isMissing else { return }
@@ -311,6 +454,20 @@ struct CuePointsView: View {
     private func reload() {
         guard let track else { points = []; return }
         points = CuePoint.points(for: track.id, in: context)
+        #if DEBUG
+        // -seedMarks: sample marks for screenshots/QA (never plays audio).
+        if points.isEmpty, ProcessInfo.processInfo.arguments.contains("-seedMarks") {
+            for (t, n, c) in [(8.0, "Intro hit", CuePointColor.amber), (21.5, "Verse 1", .blue), (44.0, "Pre-chorus", .green),
+                              (52.0, "Chorus drop", .red), (75.0, "Verse 2", .blue), (96.0, "Bridge", .purple)] {
+                context.insert(CuePoint(trackID: track.id, time: t, name: n, colorHex: c.rawValue))
+            }
+            try? context.save()
+            points = CuePoint.points(for: track.id, in: context)
+            selected = points.dropFirst(3).first?.id
+            span = 120
+            engine.seek(to: 47)
+        }
+        #endif
         rebuildExports()
     }
 
@@ -327,8 +484,50 @@ struct CuePointsView: View {
         let p = CuePoint(trackID: track.id, time: f, name: "Cue \(n)", colorHex: CuePointColor.amber.rawValue)
         context.insert(p)
         lastMarkID = p.id
+        selected = p.id
         save()
         Haptics.tick()
+    }
+
+    private func snapped(_ t: TimeInterval) -> TimeInterval {
+        let f = clock.rate.fps
+        return max(0, (t * f).rounded() / f)
+    }
+
+    private func shift(_ p: CuePoint, by s: TimeInterval) {
+        p.time = min(max(0, snapped(p.time + s)), track?.duration ?? .infinity)
+        save()
+    }
+
+    private func delete(_ p: CuePoint) {
+        if selected == p.id { selected = nil }
+        context.delete(p)
+        save()
+    }
+
+    private func frameStep(_ n: Int) {
+        guard loaded, let track else { return }
+        if engine.transport == .playing { engine.pause() }
+        engine.seek(to: min(max(0, snapped(engine.currentTime) + Double(n) / clock.rate.fps), track.duration))
+    }
+
+    private func scheduleSave() {
+        saveTask?.cancel()
+        saveTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            if !Task.isCancelled { try? context.save(); rebuildExports() }
+        }
+    }
+
+    /// Live drag from the timeline: move now, save once the drag settles.
+    private func move(_ p: CuePoint, to t: TimeInterval) {
+        p.time = t
+        points.sort { $0.time < $1.time }
+        saveTask?.cancel()
+        saveTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(400))
+            if !Task.isCancelled { save() }
+        }
     }
 
     private func togglePlay() { if loaded { engine.togglePlayPause() } }
@@ -339,6 +538,7 @@ struct CuePointsView: View {
     }
 
     private func jump(to p: CuePoint) {
+        selected = p.id
         guard loaded else { return }
         engine.seek(to: p.time)
     }
