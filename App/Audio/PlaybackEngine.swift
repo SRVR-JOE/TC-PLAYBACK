@@ -180,6 +180,8 @@ final class PlaybackEngine {
     @ObservationIgnored private var inputEngine: AVAudioEngine?
     @ObservationIgnored private let tapTargets = InputTapTargets()
     @ObservationIgnored private var analysisSinks = 0
+    @ObservationIgnored private var compareSinks = 0
+    @ObservationIgnored private var outputTapWanted = false
     @ObservationIgnored private var wasPlayingBeforeInterruption = false
     @ObservationIgnored private var routeAtPlay: String = ""
     @ObservationIgnored private var lastNowPlayingSecond = -1
@@ -389,6 +391,7 @@ final class PlaybackEngine {
         if let graph { return graph }
         let g = try AudioGraph()
         g.core.setRouting(routing)
+        g.core.outputTapEnabled.store(outputTapWanted, ordering: .relaxed)
         graph = g
         hardwareSampleRate = g.core.sampleRate
         let m = TimecodeMonitor(analysisRing: g.core.analysisRing, sampleRate: g.core.sampleRate)
@@ -718,7 +721,40 @@ final class PlaybackEngine {
 
     // MARK: - External input
 
-    private var wantsInput: Bool { readExternalInput || analysisSinks > 0 }
+    private var wantsInput: Bool { readExternalInput || analysisSinks > 0 || compareSinks > 0 }
+
+    /// Additive (Scope page): a second input consumer whose ring is anchored in host time, so
+    /// the input can be lined up sample-for-sample against the post-mix output tap.
+    func attachInputCompare(_ ring: SPSCRingBuffer, clock: TapClock) {
+        tapTargets.setCompare(ring, clock: clock)
+        compareSinks = 1
+        updateInputCapture()
+    }
+
+    func detachInputCompare() {
+        tapTargets.setCompare(nil, clock: nil)
+        compareSinks = 0
+        updateInputCapture()
+    }
+
+    /// Additive (Scope page): turn the post-mix output tap on or off. It records exactly what
+    /// the render callback hands to the output device (after routing, gain and master fade).
+    /// Does not create the audio graph or start playback; it applies to the current graph and
+    /// to any graph built later.
+    func setOutputAnalysis(_ on: Bool) {
+        outputTapWanted = on
+        if let core = graph?.core {
+            if !on { core.outputTapClock.clear() }
+            core.outputTapEnabled.store(on, ordering: .releasing)
+        }
+    }
+
+    /// The current graph's output tap while `setOutputAnalysis(true)`; nil with no audio graph.
+    /// The graph can be rebuilt (route / sample-rate change), so consumers re-read this.
+    var outputTap: OutputTapHandle? {
+        guard outputTapWanted, let core = graph?.core else { return nil }
+        return OutputTapHandle(ring: core.outputTap, clock: core.outputTapClock, sampleRate: core.sampleRate)
+    }
 
     /// Additive: an extra consumer of the device input (the Input Analyzer). The ring receives
     /// every input buffer (1 or 2 channels at `inputInfo.sampleRate`) while attached. Capture
@@ -800,9 +836,11 @@ final class PlaybackEngine {
         let ring = SPSCRingBuffer(channels: min(2, Int(fmt.channelCount)), minimumCapacity: Int(fmt.sampleRate))
         tapTargets.monitorRing = ring
         let targets = tapTargets
-        input.installTap(onBus: 0, bufferSize: 1024, format: fmt) { buffer, _ in
+        let tapRate = fmt.sampleRate
+        input.installTap(onBus: 0, bufferSize: 1024, format: fmt) { buffer, when in
             guard let ch = buffer.floatChannelData else { return }
-            targets.deliver(ch[0], buffer.format.channelCount > 1 ? ch[1] : nil, count: Int(buffer.frameLength))
+            targets.deliver(ch[0], buffer.format.channelCount > 1 ? ch[1] : nil, count: Int(buffer.frameLength),
+                            hostTime: when.isHostTimeValid ? when.hostTime : 0, sampleRate: tapRate)
         }
         do {
             try ie.start()
@@ -841,6 +879,8 @@ final class InputTapTargets: @unchecked Sendable {
     private var _monitorRing: SPSCRingBuffer?
     private var _monitorEnabled = false
     private var _analysis: SPSCRingBuffer?
+    private var _compare: SPSCRingBuffer?
+    private var _compareClock: TapClock?
 
     var monitorRing: SPSCRingBuffer? {
         get { lock.withLock { _monitorRing } }
@@ -851,11 +891,20 @@ final class InputTapTargets: @unchecked Sendable {
         set { lock.withLock { _monitorEnabled = newValue } }
     }
     func setAnalysis(_ ring: SPSCRingBuffer?) { lock.withLock { _analysis = ring } }
+    func setCompare(_ ring: SPSCRingBuffer?, clock: TapClock?) {
+        lock.withLock { _compare = ring; _compareClock = ring == nil ? nil : clock }
+    }
 
-    func deliver(_ l: UnsafePointer<Float>, _ r: UnsafePointer<Float>?, count: Int) {
-        let (m, a) = lock.withLock { (_monitorEnabled ? _monitorRing : nil, _analysis) }
+    /// `hostTime` = mach host time of the buffer's first frame (0 = unknown), for the compare ring.
+    func deliver(_ l: UnsafePointer<Float>, _ r: UnsafePointer<Float>?, count: Int,
+                 hostTime: UInt64 = 0, sampleRate: Double = 0) {
+        let (m, a, c, cc) = lock.withLock { (_monitorEnabled ? _monitorRing : nil, _analysis, _compare, _compareClock) }
         if let m { _ = m.write(l, r, count: count) }
         if let a { _ = a.write(l, r, count: count) }
+        if let c {
+            cc?.note(hostTime: hostTime, frameIndex: c.totalWritten, sampleRate: sampleRate)
+            _ = c.write(l, r, count: count)
+        }
     }
 }
 

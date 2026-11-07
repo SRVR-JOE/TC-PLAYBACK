@@ -110,93 +110,9 @@ struct InputAnalyzerView: View {
     // MARK: Channel
 
     private func channelCard(_ side: SourceChannel) -> some View {
-        let c = side == .left ? analyzer.left : analyzer.right
-        let st = c.status
-        let live = st.state == .locked || st.state == .freewheel
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                IndicatorLamp(color: Theme.go, isOn: c.hasSignal, size: 9)
-                Text(side == .left ? (analyzer.isMono ? "Input" : "Left") : "Right")
-                    .font(Theme.sectionHeader)
-                    .foregroundStyle(Theme.textSecondary)
-                Spacer()
-                if c.clipped {
-                    Text("Clip").font(Theme.caption.weight(.semibold)).foregroundStyle(Theme.stop)
-                }
-                lockBadge(st.state)
-            }
-
-            Text(st.timecode?.description ?? "--:--:--:--")
-                .font(Theme.numeric(isPad ? 44 : 36, weight: .regular))
-                .monospacedDigit()
-                .foregroundStyle(live ? tcColor : Theme.textTertiary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.5)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityLabel(st.timecode.map { "Timecode \($0.description)" } ?? "No timecode")
-
-            levelBar(c)
-
-            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 7) {
-                row("Rate", st.rate?.operatorLabel ?? "—")
-                row("Speed", speedText(c), tint: speedTint(c))
-                row("LTC level", st.levelDBFS.map { String(format: "%.1f dBFS", $0) } ?? "—")
-                row("Peak / RMS", "\(db(c.peakDBFS)) / \(db(c.rmsDBFS))")
-                row("DC offset", c.hasSignal ? String(format: "%+.1f %%", c.dc * 100) : "—",
-                    tint: abs(c.dc) > 0.05 ? Theme.standby : nil)
-                row("Direction", live ? (st.isReverse ? "Reverse" : "Forward") : "—")
-                row("User bits", live ? userBits(st.userBits) : "—")
-                row("Hits", "\(st.discontinuities)", tint: st.discontinuities > 0 ? Theme.standby : nil)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .panel(padding: isPad ? 16 : 14)
-    }
-
-    private func row(_ k: String, _ v: String, tint: Color? = nil) -> some View {
-        GridRow {
-            Text(k).font(Theme.label).foregroundStyle(Theme.textSecondary)
-            Text(v).font(Theme.numeric(14)).foregroundStyle(tint ?? Theme.textPrimary)
-                .lineLimit(1).minimumScaleFactor(0.7)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func lockBadge(_ s: TCLockState) -> some View {
-        let (text, color): (String, Color) = switch s {
-        case .locked: ("Locked", Theme.go)
-        case .freewheel: ("Freewheel", Theme.standby)
-        case .acquiring: ("Acquiring", Theme.standby)
-        case .noSignal: ("No timecode", Theme.textTertiary)
-        }
-        return HStack(spacing: 6) {
-            IndicatorLamp(color: color, isOn: s != .noSignal, size: 8)
-            Text(text).font(Theme.caption.weight(.medium)).foregroundStyle(s == .noSignal ? Theme.textTertiary : Theme.textPrimary)
-        }
-    }
-
-    /// Flat horizontal bar: RMS fill, peak-hold tick, −18 and −6 marks.
-    private func levelBar(_ c: InputAnalyzer.Channel) -> some View {
-        Canvas { gc, size in
-            func x(_ db: Float) -> CGFloat {
-                guard db.isFinite else { return 0 }
-                return size.width * CGFloat(max(0, min(1, (db + 60) / 60)))
-            }
-            gc.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Theme.surfaceSunken))
-            let rx = x(c.rmsDBFS)
-            let fill: Color = c.rmsDBFS > -6 ? Theme.meterHigh : (c.rmsDBFS > -18 ? Theme.meterMid : Theme.meterLow)
-            gc.fill(Path(CGRect(x: 0, y: 0, width: rx, height: size.height)), with: .color(fill.opacity(0.85)))
-            for m: Float in [-18, -6] {
-                gc.fill(Path(CGRect(x: x(m), y: 0, width: 1, height: size.height)), with: .color(Theme.hairline))
-            }
-            if c.peakDBFS.isFinite {
-                gc.fill(Path(CGRect(x: max(0, x(c.peakDBFS) - 1), y: 0, width: 2, height: size.height)),
-                        with: .color(Theme.textPrimary))
-            }
-        }
-        .frame(height: 8)
-        .clipShape(RoundedRectangle(cornerRadius: 2))
-        .accessibilityHidden(true)
+        InputChannelCard(channel: side == .left ? analyzer.left : analyzer.right,
+                         title: side == .left ? (analyzer.isMono ? "Input" : "Left") : "Right",
+                         large: isPad, tcColor: tcColor)
     }
 
     // MARK: Compare
@@ -252,9 +168,64 @@ struct InputAnalyzerView: View {
         .panel(padding: isPad ? 16 : 12)
     }
 
+}
+
+/// One channel of the input analysis: lamp, lock, timecode, level bar and the measurement grid.
+/// Shared by the Input analyzer and the Scope page.
+struct InputChannelCard: View {
+    var channel: InputAnalyzer.Channel
+    var title: String
+    var large: Bool = false
+    var tcColor: Color = Theme.textPrimary
+    private var isPad: Bool { large }
+
+    var body: some View {
+        let c = channel
+        let st = c.status
+        let live = st.state == .locked || st.state == .freewheel
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                IndicatorLamp(color: Theme.go, isOn: c.hasSignal, size: 9)
+                Text(title)
+                    .font(Theme.sectionHeader)
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+                if c.clipped {
+                    Text("Clip").font(Theme.caption.weight(.semibold)).foregroundStyle(Theme.stop)
+                }
+                LockStateLabel(state: st.state)
+            }
+
+            Text(st.timecode?.description ?? "--:--:--:--")
+                .font(Theme.numeric(isPad ? 44 : 36, weight: .regular))
+                .monospacedDigit()
+                .foregroundStyle(live ? tcColor : Theme.textTertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel(st.timecode.map { "Timecode \($0.description)" } ?? "No timecode")
+
+            LevelBar(peakDBFS: c.peakDBFS, rmsDBFS: c.rmsDBFS)
+
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 7) {
+                MeasureRow("Rate", st.rate?.operatorLabel ?? "—")
+                MeasureRow("Speed", speedText(c), tint: speedTint(c))
+                MeasureRow("LTC level", st.levelDBFS.map { String(format: "%.1f dBFS", $0) } ?? "—")
+                MeasureRow("Peak / RMS", "\(Self.db(c.peakDBFS)) / \(Self.db(c.rmsDBFS))")
+                MeasureRow("DC offset", c.hasSignal ? String(format: "%+.1f %%", c.dc * 100) : "—",
+                           tint: abs(c.dc) > 0.05 ? Theme.standby : nil)
+                MeasureRow("Direction", live ? (st.isReverse ? "Reverse" : "Forward") : "—")
+                MeasureRow("User bits", live ? userBits(st.userBits) : "—")
+                MeasureRow("Hits", "\(st.discontinuities)", tint: st.discontinuities > 0 ? Theme.standby : nil)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panel(padding: isPad ? 16 : 14)
+    }
+
     // MARK: Format
 
-    private func db(_ v: Float) -> String { v.isFinite && v > -100 ? String(format: "%.1f", v) : "−∞" }
+    static func db(_ v: Float) -> String { v.isFinite && v > -100 ? String(format: "%.1f", v) : "−∞" }
 
     private func speedText(_ c: InputAnalyzer.Channel) -> String {
         guard let m = c.measuredFPS else { return c.status.state == .locked ? "Measuring…" : "—" }
@@ -274,5 +245,66 @@ struct InputAnalyzerView: View {
             let s = hex.index(hex.startIndex, offsetBy: i)
             return String(hex[s..<hex.index(s, offsetBy: 2)])
         }.joined(separator: " ")
+    }
+}
+
+/// Label / value row for the analysis grids.
+struct MeasureRow: View {
+    var key: String
+    var value: String
+    var tint: Color?
+    init(_ k: String, _ v: String, tint: Color? = nil) { key = k; value = v; self.tint = tint }
+    var body: some View {
+        GridRow {
+            Text(key).font(Theme.label).foregroundStyle(Theme.textSecondary)
+            Text(value).font(Theme.numeric(14)).foregroundStyle(tint ?? Theme.textPrimary)
+                .lineLimit(1).minimumScaleFactor(0.7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// Lamp + word for a timecode reader's lock state.
+struct LockStateLabel: View {
+    var state: TCLockState
+    var body: some View {
+        let (text, color): (String, Color) = switch state {
+        case .locked: ("Locked", Theme.go)
+        case .freewheel: ("Freewheel", Theme.standby)
+        case .acquiring: ("Acquiring", Theme.standby)
+        case .noSignal: ("No timecode", Theme.textTertiary)
+        }
+        return HStack(spacing: 6) {
+            IndicatorLamp(color: color, isOn: state != .noSignal, size: 8)
+            Text(text).font(Theme.caption.weight(.medium)).foregroundStyle(state == .noSignal ? Theme.textTertiary : Theme.textPrimary)
+        }
+    }
+}
+
+/// Flat horizontal bar: RMS fill, peak-hold tick, −18 and −6 marks.
+struct LevelBar: View {
+    var peakDBFS: Float
+    var rmsDBFS: Float
+    var body: some View {
+        Canvas { gc, size in
+            func x(_ db: Float) -> CGFloat {
+                guard db.isFinite else { return 0 }
+                return size.width * CGFloat(max(0, min(1, (db + 60) / 60)))
+            }
+            gc.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Theme.surfaceSunken))
+            let rx = x(rmsDBFS)
+            let fill: Color = rmsDBFS > -6 ? Theme.meterHigh : (rmsDBFS > -18 ? Theme.meterMid : Theme.meterLow)
+            gc.fill(Path(CGRect(x: 0, y: 0, width: rx, height: size.height)), with: .color(fill.opacity(0.85)))
+            for m: Float in [-18, -6] {
+                gc.fill(Path(CGRect(x: x(m), y: 0, width: 1, height: size.height)), with: .color(Theme.hairline))
+            }
+            if peakDBFS.isFinite {
+                gc.fill(Path(CGRect(x: max(0, x(peakDBFS) - 1), y: 0, width: 2, height: size.height)),
+                        with: .color(Theme.textPrimary))
+            }
+        }
+        .frame(height: 8)
+        .clipShape(RoundedRectangle(cornerRadius: 2))
+        .accessibilityHidden(true)
     }
 }

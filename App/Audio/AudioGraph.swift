@@ -25,7 +25,7 @@ final class AudioGraph {
         let core = RenderCore(sampleRate: rate)
         self.core = core
         unowned(unsafe) let c = core
-        sourceNode = AVAudioSourceNode(format: fmt) { _, _, frameCount, abl -> OSStatus in
+        sourceNode = AVAudioSourceNode(format: fmt) { _, timestamp, frameCount, abl -> OSStatus in
             let buffers = UnsafeMutableAudioBufferListPointer(abl)
             let n = Int(frameCount)
             guard buffers.count >= 2,
@@ -36,7 +36,9 @@ final class AudioGraph {
                 }
                 return noErr
             }
-            c.render(frames: n, outL: l, outR: r)
+            let ts = timestamp.pointee
+            let host: UInt64 = ts.mFlags.contains(.hostTimeValid) ? ts.mHostTime : 0
+            c.render(frames: n, outL: l, outR: r, hostTime: host)
             return noErr
         }
         engine.attach(sourceNode)

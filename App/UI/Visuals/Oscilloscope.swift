@@ -64,10 +64,16 @@ final class ScopeModel {
 
 struct OscilloscopeContent: View {
     @Binding var mode: OscilloscopeView.Mode
+    var sharedTimebase: Binding<Int>? = nil
+    var externalHold: Binding<Bool>? = nil
 
     @Environment(\.visualsDataSource) private var data
     @State private var model = ScopeModel()
-    @State private var timebaseIndex = 3
+    @State private var localTimebase = 3
+    private var timebaseIndex: Int {
+        get { sharedTimebase?.wrappedValue ?? localTimebase }
+        nonmutating set { if let b = sharedTimebase { b.wrappedValue = newValue } else { localTimebase = newValue } }
+    }
     @State private var autoGain = true
     @State private var trigger: ScopeTrigger = .auto
     @State private var slope: ScopeSlope = .rising
@@ -114,6 +120,11 @@ struct OscilloscopeContent: View {
             .accessibilityHint("Double-tap to auto-set")
         }
         .onChange(of: hasLTC) { _, has in if !has, mode == .eye { mode = .overlay } }
+        .onChange(of: externalHold?.wrappedValue ?? false, initial: true) { _, held in
+            guard externalHold != nil, held == running else { return }
+            running = !held
+            model.frozen = held ? data.snapshot() : nil
+        }
     }
 
     // MARK: Controls
@@ -200,6 +211,7 @@ struct OscilloscopeContent: View {
 
     private var runStop: some View {
         Button {
+            if let h = externalHold { h.wrappedValue.toggle(); return }
             running.toggle()
             if !running { model.frozen = data.snapshot() } else { model.frozen = nil }
         } label: {
@@ -266,6 +278,7 @@ struct OscilloscopeContent: View {
     private func autoSet() {
         running = true
         model.frozen = nil
+        externalHold?.wrappedValue = false
         autoGain = true
         level = 0
         slope = .rising
