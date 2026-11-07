@@ -68,7 +68,8 @@ final class ToolsCueCallerLanguageTests: XCTestCase {
         XCTAssertEqual(CueCallTemplates.template(for: "pt-PT").language, "pt")
         XCTAssertEqual(CueCallTemplates.template(for: "zh-TW").language, "zh-Hant")
         XCTAssertEqual(CueCallTemplates.template(for: "zh-CN").language, "zh-Hans")
-        XCTAssertEqual(CueCallTemplates.template(for: "sv-SE").language, "en")
+        XCTAssertEqual(CueCallTemplates.template(for: "sv-SE").language, "sv")
+        XCTAssertEqual(CueCallTemplates.template(for: "fi-FI").language, "en")
         // Trailing punctuation in the note isn't doubled.
         XCTAssertEqual(CueCallTemplates.text(.go, note: "Camera 3, push in.", language: "en-US"), "Camera 3, push in… go")
     }

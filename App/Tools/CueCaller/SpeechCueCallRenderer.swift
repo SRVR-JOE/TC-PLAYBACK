@@ -207,14 +207,22 @@ final class SpeechCueCallRenderer: CueCallVoiceRenderer, @unchecked Sendable {
     /// first sound and 20 ms after the last so plosives and releases survive.
     static func trimSilence(_ x: [Float], sampleRate: Double, belowPeakDB: Float = 45,
                             lead: Double = 0.008, tail: Double = 0.020) -> [Float] {
+        guard let r = trimBounds(x, sampleRate: sampleRate, belowPeakDB: belowPeakDB, lead: lead, tail: tail) else { return [] }
+        return Array(x[r])
+    }
+
+    /// The range `trimSilence` keeps (nil = nothing audible). Renderers that know where a word
+    /// starts use `lowerBound` to correct its onset for the trimmed lead-in.
+    static func trimBounds(_ x: [Float], sampleRate: Double, belowPeakDB: Float = 45,
+                           lead: Double = 0.008, tail: Double = 0.020) -> ClosedRange<Int>? {
         let peak = x.reduce(0) { max($0, abs($1)) }
-        guard peak > 0 else { return [] }
+        guard peak > 0 else { return nil }
         let thr = max(peak * powf(10, -belowPeakDB / 20), 1e-4)
         guard let first = x.firstIndex(where: { abs($0) > thr }),
-              let last = x.lastIndex(where: { abs($0) > thr }) else { return [] }
+              let last = x.lastIndex(where: { abs($0) > thr }) else { return nil }
         let a = max(0, first - Int(lead * sampleRate))
         let b = min(x.count - 1, last + Int(tail * sampleRate))
-        return Array(x[a...b])
+        return a...b
     }
 
     /// 3 ms fade in, 6 ms fade out, so trimmed edges don't click.

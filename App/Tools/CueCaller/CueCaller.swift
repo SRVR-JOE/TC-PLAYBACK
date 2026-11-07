@@ -184,6 +184,16 @@ final class CueCaller {
         return nil
     }
 
+    /// The rate calls are rendered at (the call mixer's, else the hardware's).
+    var renderSampleRate: Double { sampleRate }
+
+    /// The marks the caller has loaded (the playing or prepared track), for "Prepare calls".
+    var loadedMarks: [CueCallMark] { marks }
+
+    /// Drop rendered audio and render again (after calls were prepared offline, so calls that
+    /// fell back to the device voice pick up the prepared ones).
+    func reloadRenders() { clearRenders() }
+
     static func channelList(_ ch: [Int]) -> String { ch.map { String($0 + 1) }.joined(separator: ", ") }
 
     // MARK: Engagement

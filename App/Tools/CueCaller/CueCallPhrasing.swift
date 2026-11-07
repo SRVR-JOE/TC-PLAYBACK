@@ -11,7 +11,7 @@ import Foundation
 enum CueCallLanguage {
     /// Languages offered in the area picker, in display order.
     static let offered: [String] = [
-        "en-US", "en-GB", "es-ES", "es-MX", "fr-FR", "de-DE", "it-IT", "pt-BR",
+        "en-US", "en-GB", "fr-FR", "es-ES", "de-DE", "de-CH", "sv-SE", "es-MX", "it-IT", "pt-BR",
         "nl-NL", "ja-JP", "ko-KR", "zh-Hans", "zh-Hant",
     ]
 
@@ -48,10 +48,13 @@ enum CueCallLanguage {
     static func same(_ a: String, _ b: String) -> Bool { key(a) == key(b) }
 
     /// Tag to hand to the Translation framework. Region is kept where Apple ships a separate
-    /// model (en-US/en-GB, pt-BR, zh scripts), otherwise the bare language.
+    /// model (en-US/en-GB, pt-BR, zh scripts), otherwise the bare language. Swiss German areas
+    /// speak Swiss Standard German, so they translate as German ("de-CH" → "de").
     static func translationTag(_ tag: String) -> String {
         if let s = chineseScript(tag) { return "zh-\(s)" }
-        return tag.replacingOccurrences(of: "_", with: "-")
+        let t = tag.replacingOccurrences(of: "_", with: "-")
+        if code(t) == "de" { return "de" }
+        return t
     }
 
     /// The operator's own language, used as the note source when nothing else is set.
@@ -127,6 +130,7 @@ enum CueCallTemplates {
         .init(language: "it", standby: "Attenzione, {note}", go: "{note}… via", goWord: "via", bareGo: "Via"),
         .init(language: "pt", standby: "Atenção, {note}", go: "{note}… já", goWord: "já", bareGo: "Já"),
         .init(language: "nl", standby: "Stand-by, {note}", go: "{note}… go", goWord: "go", bareGo: "Go"),
+        .init(language: "sv", standby: "Stand by, {note}", go: "{note}… kör", goWord: "kör", bareGo: "Kör"),
         .init(language: "ja", standby: "スタンバイ、{note}", go: "{note}… キュー", goWord: "キュー", bareGo: "キュー"),
         .init(language: "ko", standby: "스탠바이, {note}", go: "{note}… 큐", goWord: "큐", bareGo: "큐"),
         .init(language: "zh-Hans", standby: "准备，{note}", go: "{note}… 走", goWord: "走", bareGo: "走"),
@@ -160,11 +164,11 @@ enum CueCallLexicon {
     /// The word for "camera" per language key.
     static let cameraWord: [String: String] = [
         "en": "Camera", "es": "Cámara", "fr": "Caméra", "de": "Kamera", "it": "Camera",
-        "pt": "Câmera", "nl": "Camera", "ja": "カメラ", "ko": "카메라", "zh-Hans": "摄像机", "zh-Hant": "攝影機",
+        "pt": "Câmera", "nl": "Camera", "sv": "Kamera", "ja": "カメラ", "ko": "카메라", "zh-Hans": "摄像机", "zh-Hant": "攝影機",
     ]
     static let camerasWord: [String: String] = [
         "en": "Cameras", "es": "Cámaras", "fr": "Caméras", "de": "Kameras", "it": "Camere",
-        "pt": "Câmeras", "nl": "Camera's", "ja": "カメラ", "ko": "카메라", "zh-Hans": "摄像机", "zh-Hant": "攝影機",
+        "pt": "Câmeras", "nl": "Camera's", "sv": "Kameror", "ja": "カメラ", "ko": "카메라", "zh-Hans": "摄像机", "zh-Hant": "攝影機",
     ]
 
     /// Terms the translator must leave alone (also marked skip-translation where supported).
@@ -186,6 +190,8 @@ enum CueCallLexicon {
                ("Steadicam", "Stedicam"), ("Jib", "Djib")],
         "nl": [("LX", "L X"), ("SFX", "S F X"), ("VT", "V T"), ("PTZ", "P T Z"),
                ("Steadicam", "Steddiekem"), ("Jib", "Dzjib")],
+        "sv": [("LX", "L X"), ("SFX", "S F X"), ("VT", "V T"), ("PTZ", "P T Z"),
+               ("Steadicam", "Steddikam"), ("Jib", "Djibb")],
         "ja": [("Steadicam", "ステディカム"), ("Jib", "ジブ"), ("PTZ", "P T Z"), ("SFX", "S F X"), ("LX", "L X"), ("VT", "V T")],
         "ko": [("Steadicam", "스테디캠"), ("Jib", "지브"), ("PTZ", "P T Z"), ("SFX", "S F X"), ("LX", "L X"), ("VT", "V T")],
         "zh-Hans": [("Steadicam", "斯坦尼康"), ("Jib", "摇臂"), ("PTZ", "P T Z"), ("SFX", "S F X"), ("LX", "L X"), ("VT", "V T")],

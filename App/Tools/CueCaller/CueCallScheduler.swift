@@ -64,6 +64,7 @@ enum CueCallWords {
         "it": ("Attenzione", "via"),
         "pt": ("Atenção", "já"),
         "nl": ("Stand-by", "go"),
+        "sv": ("Stand by", "kör"),
         "ja": ("スタンバイ", "ゴー"),
         "ko": ("스탠바이", "고"),
         "zh": ("准备", "走"),

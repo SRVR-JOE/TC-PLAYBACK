@@ -17,6 +17,8 @@ struct CueCallsReviewSheet: View {
     @State private var editText = ""
     /// Bumps when an override changes so cells re-read it.
     @State private var revision = 0
+    /// Languages Apple can't translate into from the note language: the crew types those calls.
+    @State private var handOnly: Set<String> = []
 
     struct EditTarget: Identifiable, Equatable { let markID: UUID; let language: String; let note: String; var id: String { "\(markID)|\(language)" } }
 
@@ -69,6 +71,11 @@ struct CueCallsReviewSheet: View {
             }
         }
         .presentationSizing(.page)
+        .task(id: languages.joined() + model.noteLanguage) {
+            var out = Set<String>()
+            for l in languages where await model.translationStatus(for: l) == .unsupported { out.insert(l) }
+            handOnly = out
+        }
     }
 
     private var filterBar: some View {
@@ -78,6 +85,9 @@ struct CueCallsReviewSheet: View {
             Spacer()
             Text("Return moves to the next mark. Tap a translation to write it by hand.")
                 .font(Theme.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+            if CueCallVoicesModel.shared.hasKey {
+                CueCallPrepareRow(marks: points.map(CueCallMark.init), title: trackTitle, compact: true)
+            }
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(Theme.background)
@@ -101,7 +111,9 @@ struct CueCallsReviewSheet: View {
         HStack(spacing: 0) {
             headerCell("Mark", width: markW)
             headerCell("Note · \(CueCallerUIModel.languageName(model.noteLanguage))", width: noteW)
-            ForEach(languages, id: \.self) { headerCell(CueCallerUIModel.languageName($0), width: langW) }
+            ForEach(languages, id: \.self) { lang in
+                headerCell(CueCallerUIModel.languageName(lang) + (handOnly.contains(lang) ? " · type by hand" : ""), width: langW)
+            }
         }
         .background(Theme.surface)
         .hairline(.bottom)

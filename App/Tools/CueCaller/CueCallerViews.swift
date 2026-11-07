@@ -225,6 +225,19 @@ struct CueCallerSettingsForm: View {
     private let types = CuePointTypeStore.shared
 
     var body: some View {
+        ScrollViewReader { proxy in
+            form
+                #if DEBUG
+                .task {
+                    guard CueCallerPreviewHost.mode == "keys" else { return }
+                    try? await Task.sleep(for: .milliseconds(500))
+                    proxy.scrollTo("voices", anchor: .top)
+                }
+                #endif
+        }
+    }
+
+    private var form: some View {
         Form {
             Section {
                 Toggle("Cue caller", isOn: $model.isEngaged).tint(Theme.go)
@@ -274,6 +287,9 @@ struct CueCallerSettingsForm: View {
                 Text("An area is one comms ring: its own language, voice and outputs. Swipe to remove.")
             }
             .listRowBackground(Theme.surface)
+
+            CueCallVoicesSection()
+                .id("voices")
 
             Section {
                 Picker("Notes are written in", selection: $model.noteLanguage) {
@@ -344,6 +360,16 @@ struct CueCallTranslationRow: View {
     @State private var config: TranslationSession.Configuration?
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            row
+            if status == .unsupported {
+                Text("Apple can’t translate \(CueCallerUIModel.languageName(model.noteLanguage)) into \(CueCallerUIModel.languageName(language)) on this device. Type these calls by hand in the Calls review.")
+                    .font(Theme.caption).foregroundStyle(Theme.standby)
+            }
+        }
+    }
+
+    private var row: some View {
         HStack(spacing: 10) {
             if showsName {
                 Text(CueCallerUIModel.languageName(language)).foregroundStyle(Theme.textPrimary)
@@ -384,6 +410,17 @@ struct CueCallAreaEditor: View {
     private let types = CuePointTypeStore.shared
     @State private var channels: [CueCallOutputChannel] = []
     @State private var confirmRemove = false
+    @Bindable private var voiceModel = CueCallVoicesModel.shared
+
+    /// The account's ElevenLabs voices as area voice ids, plus the area's own if the list
+    /// hasn't loaded (offline), so the picker always shows what's chosen.
+    private func elevenChoices(_ a: CueCallArea) -> [(id: String, name: String)] {
+        var out = voiceModel.accountVoices.map { (id: ElevenLabsVoiceID.tag($0.voiceID), name: $0.name) }
+        if let cur = ElevenLabsVoiceID.parse(a.voiceID), !out.contains(where: { $0.id == a.voiceID }) {
+            out.insert((id: ElevenLabsVoiceID.tag(cur), name: voiceModel.voiceName(cur)), at: 0)
+        }
+        return out
+    }
 
     private var area: Binding<CueCallArea> {
         Binding(get: { model.area(areaID) ?? CueCallArea(name: "", language: model.noteLanguage) },
@@ -411,9 +448,23 @@ struct CueCallAreaEditor: View {
                 }
                 CueCallTranslationRow(language: a.language, showsName: false)
                 Picker("Voice", selection: area.voiceID) {
-                    Text("Best available").tag(String?.none)
-                    ForEach(voices) { v in
-                        Text("\(v.name) · \(v.quality)").tag(Optional(v.id))
+                    Text("Best available on this iPad").tag(String?.none)
+                    if !elevenChoices(a).isEmpty {
+                        Section("ElevenLabs") {
+                            ForEach(elevenChoices(a), id: \.id) { v in Text(v.name).tag(Optional(v.id)) }
+                        }
+                    }
+                    Section("On this iPad") {
+                        ForEach(voices) { v in
+                            Text("\(v.name) · \(v.quality)").tag(Optional(v.id))
+                        }
+                    }
+                }
+                if voiceModel.hasKey {
+                    NavigationLink {
+                        ElevenLabsVoiceBrowser(language: a.language) { id in area.wrappedValue.voiceID = id }
+                    } label: {
+                        Text("Find voices for \(CueCallerUIModel.languageName(a.language))")
                     }
                 }
                 VStack(alignment: .leading, spacing: 6) {
@@ -433,14 +484,23 @@ struct CueCallAreaEditor: View {
                 }
                 .padding(.vertical, 4)
                 HStack {
-                    Text(voices.isEmpty ? "No voice installed for this language" : "Hear a test call on this area’s outputs")
+                    Text(voices.isEmpty && !ElevenLabsVoiceID.isEleven(a.voiceID) ? "No voice installed for this language" : "Hear a test call on this area’s outputs")
                         .font(Theme.caption).foregroundStyle(Theme.textSecondary)
                     Spacer()
                     Button("Test") { model.test(area: a) }.buttonStyle(OutlineButtonStyle(prominent: true))
                 }
-            } header: { formHeader("Language and voice") }
+            } header: { formHeader("Language and voice") } footer: {
+                if ElevenLabsVoiceID.isEleven(a.voiceID) {
+                    Text("ElevenLabs voices speak every language on this list. If a call can’t be made during the show, the best voice on this iPad says it instead.")
+                } else if !voiceModel.hasKey {
+                    Text("For more natural voices, add an ElevenLabs key in Cue caller settings.")
+                }
+            }
             .listRowBackground(Theme.surface)
-            .onChange(of: a.language) { _, _ in area.wrappedValue.voiceID = nil }
+            .onChange(of: a.language) { _, _ in
+                // ElevenLabs voices are multilingual; device voices belong to one language.
+                if !ElevenLabsVoiceID.isEleven(area.wrappedValue.voiceID) { area.wrappedValue.voiceID = nil }
+            }
 
             Section {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 56), spacing: 6)], spacing: 6) {
@@ -505,7 +565,14 @@ struct CueCallAreaEditor: View {
         .tint(Theme.accent)
         .navigationTitle(a.name.isEmpty ? "Area" : a.name)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { channels = model.outputChannels(including: a.outputChannels) }
+        .onAppear {
+            channels = model.outputChannels(including: a.outputChannels)
+            #if DEBUG
+            if CueCallerPreviewHost.mode == nil { voiceModel.loadAccountVoices() }
+            #else
+            voiceModel.loadAccountVoices()
+            #endif
+        }
         .confirmationDialog("Remove \(a.name)?", isPresented: $confirmRemove, titleVisibility: .visible) {
             Button("Remove area", role: .destructive) { model.removeArea(areaID); dismiss() }
         }
@@ -581,7 +648,10 @@ struct CueCallerPreviewHost: ViewModifier {
             CueCallArea(name: "Cámaras", language: "es-MX", outputChannels: [4, 5], laneIDs: [CuePointType.defaultID]),
             CueCallArea(name: "Caméras", language: "fr-FR", outputChannels: [6], enabled: false),
             CueCallArea(name: "Lighting", language: "en-GB", outputChannels: [7], laneIDs: [lights].compactMap { $0 }, gainDB: -3),
+            CueCallArea(name: "Kameras Zürich", language: "de-CH", voiceID: ElevenLabsVoiceID.tag("preview-anna"), outputChannels: [8, 9]),
+            CueCallArea(name: "Kameror", language: "sv-SE", voiceID: ElevenLabsVoiceID.tag("preview-erik"), outputChannels: [10]),
         ]
+        CueCallVoicesModel.shared.seedPreview()
     }
 
     func body(content: Content) -> some View {
@@ -592,25 +662,35 @@ struct CueCallerPreviewHost: ViewModifier {
                 if CueCallerUIModel.shared.settings.enabled == false, ProcessInfo.processInfo.arguments.contains("-cueCallerOn") {
                     CueCallerUIModel.shared.isEngaged = true
                 }
-                if mode == "settings" || mode == "area" {
+                if mode == "settings" || mode == "area" || mode == "swiss" || mode == "voices" || mode == "keys" {
                     try? await Task.sleep(for: .milliseconds(600))
                     show = true
                 }
             }
-            .sheet(isPresented: $show) { CueCallerPreviewSheet(openArea: Self.mode == "area") }
+            .sheet(isPresented: $show) { CueCallerPreviewSheet(mode: Self.mode ?? "settings") }
     }
 }
 
 private struct CueCallerPreviewSheet: View {
-    var openArea: Bool
+    var mode: String
     @State private var path: [UUID] = []
+    @State private var browse = false
     var body: some View {
         NavigationStack(path: $path) {
             CueCallerSettingsForm()
                 .navigationDestination(for: UUID.self) { CueCallAreaEditor(areaID: $0) }
+                .navigationDestination(isPresented: $browse) { ElevenLabsVoiceBrowser(language: "de-CH") { _ in } }
         }
         .presentationSizing(.page)
-        .onAppear { if openArea, let id = CueCallerUIModel.shared.settings.areas.dropFirst().first?.id { path = [id] } }
+        .onAppear {
+            let areas = CueCallerUIModel.shared.settings.areas
+            switch mode {
+            case "area": if let id = areas.dropFirst().first?.id { path = [id] }
+            case "swiss": if let id = areas.first(where: { $0.language == "de-CH" })?.id { path = [id] }
+            case "voices": browse = true
+            default: break
+            }
+        }
     }
 }
 #endif

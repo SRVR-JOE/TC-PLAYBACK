@@ -357,8 +357,10 @@ final class CueCallerUIModel {
     /// Common show languages, in the order operators pick them.
     nonisolated static let commonLanguages: [Language] = [
         .init(id: "en-US", name: "English (US)"), .init(id: "en-GB", name: "English (UK)"),
-        .init(id: "es-ES", name: "Spanish (Spain)"), .init(id: "es-MX", name: "Spanish (Mexico)"),
-        .init(id: "fr-FR", name: "French"), .init(id: "de-DE", name: "German"), .init(id: "it-IT", name: "Italian"),
+        .init(id: "fr-FR", name: "French"), .init(id: "es-ES", name: "Spanish (Spain)"),
+        .init(id: "de-DE", name: "German"), .init(id: "de-CH", name: "German (Switzerland)"),
+        .init(id: "sv-SE", name: "Swedish"),
+        .init(id: "es-MX", name: "Spanish (Mexico)"), .init(id: "it-IT", name: "Italian"),
         .init(id: "pt-BR", name: "Portuguese (Brazil)"), .init(id: "ja-JP", name: "Japanese"), .init(id: "ko-KR", name: "Korean"),
         .init(id: "zh-CN", name: "Chinese (Mandarin)"), .init(id: "nl-NL", name: "Dutch"),
     ]

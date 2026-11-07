@@ -10,21 +10,12 @@ enum CueCallerWiring {
         guard !installed else { return }
         installed = true
         caller.translator = AppleCueCallTranslator.shared
-        caller.renderer = SpeechCueCallRenderer.shared
+        // "eleven:" voices go to ElevenLabs (device voice as the fallback), the rest to the device.
+        let router = CueCallVoiceRouter.shared
+        router.onFallbacksChanged = { Task { @MainActor in CueCallVoicesModel.shared.refreshFallbacks() } }
+        caller.renderer = router
         caller.phrase = { kind, note, language in CueCallTemplates.text(kind, note: note, language: language) }
-        caller.renderStep = { call, note, area, sampleRate in
-            let voice = SpeechCueCallRenderer.shared
-            if call.kind == .go {
-                let audio = try await voice.renderGo(note: note, template: CueCallTemplates.template(for: area.language),
-                                                     language: area.language, voiceID: area.voiceID,
-                                                     rate: area.rate, sampleRate: sampleRate)
-                return CueCallRenderedAudio(samples: audio.samples,
-                                            goOnset: audio.goOnset.map { Int(($0 * sampleRate).rounded()) })
-            }
-            let samples = try await voice.render(call.text, language: area.language, voiceID: area.voiceID,
-                                                 rate: area.rate, sampleRate: sampleRate)
-            return CueCallRenderedAudio(samples: samples)
-        }
+        caller.renderStep = router.renderStep()
         caller.noteLanguage = CueCallerUIModel.shared.noteLanguage
     }
 }
