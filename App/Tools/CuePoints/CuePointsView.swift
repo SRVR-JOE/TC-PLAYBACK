@@ -455,16 +455,16 @@ struct CuePointsView: View {
                 }
             }
             HStack(spacing: 6) {
-                stepButton("−1s") { shift(p, by: -1) }
-                stepButton("−1f") { shift(p, by: -1 / clock.rate.fps) }
+                stepButton("−10f") { shift(p, frames: -10) }
+                stepButton("−1f") { shift(p, frames: -1) }
                 Button { jump(to: p) } label: {
                     Text(clock.timecode(at: p.time).description).font(Theme.numeric(17)).foregroundStyle(Theme.textPrimary)
                         .frame(maxWidth: .infinity, minHeight: 34)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Go to \(clock.timecode(at: p.time).description)")
-                stepButton("+1f") { shift(p, by: 1 / clock.rate.fps) }
-                stepButton("+1s") { shift(p, by: 1) }
+                stepButton("+1f") { shift(p, frames: 1) }
+                stepButton("+10f") { shift(p, frames: 10) }
             }
             HStack(spacing: 8) {
                 colourSwatches(current: idx.colorHex(of: p)) { hex in p.colorHex = hex == type.colorHex ? nil : hex; save() }
@@ -797,8 +797,7 @@ struct CuePointsView: View {
 
     private func nudge(_ p: CuePoint, _ frames: Int, _ symbol: String) -> some View {
         Button {
-            p.time = max(0, p.time + Double(frames) / clock.rate.fps)
-            save()
+            shift(p, frames: frames)
         } label: {
             Image(systemName: symbol)
                 .font(.system(size: 12, weight: .semibold))
@@ -1174,8 +1173,11 @@ struct CuePointsView: View {
         return max(0, (t * f).rounded() / f)
     }
 
-    private func shift(_ p: CuePoint, by s: TimeInterval) {
-        p.time = min(max(0, snapped(p.time + s)), track?.duration ?? .infinity)
+    /// Moves a mark by whole frames (counted on the frame grid, so repeated taps never drift).
+    private func shift(_ p: CuePoint, frames n: Int) {
+        let f = clock.rate.fps
+        let frame = (p.time * f).rounded() + Double(n)
+        p.time = min(max(0, frame / f), track?.duration ?? .infinity)
         save()
     }
 
