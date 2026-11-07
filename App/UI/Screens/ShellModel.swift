@@ -42,6 +42,7 @@ final class ShellModel {
     var showInputAnalyzer = false
     /// Scope page: device input and our output side by side.
     var showScope = false
+    var showCameras = false
     var showCuePoints = false
     var banner: ShellBanner?
     /// Cue whose number is being edited inline in the list.

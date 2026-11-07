@@ -57,6 +57,7 @@ struct CuePointsView: View {
     // Cue caller
     @State private var showCalls = false
     @State private var showCallerSettings = false
+    @State private var showCameras = false
 
     // VIDEO hook: optional panel shown above the timeline in both layouts (video sync builder).
 
@@ -77,7 +78,7 @@ struct CuePointsView: View {
     private static var reseeded = false
     #endif
 
-    private enum Field: Hashable { case row(UUID), name, cueNumber, fade, call }
+    private enum Field: Hashable { case row(UUID), name, cueNumber, fade, call(Int) }
 
     struct ExportFile: Identifiable { let id = UUID(); let format: CuePointFormat; let title: String; let detail: String; let urls: [URL] }
 
@@ -147,6 +148,7 @@ struct CuePointsView: View {
                 CueCallerPreviewHost.seedSampleAreas()
                 try? await Task.sleep(for: .seconds(1)); showCalls = true
             }
+            if CueCallerPreviewHost.mode == "cameras" { try? await Task.sleep(for: .seconds(1)); showCameras = true }
         }
         #endif
         #if DEBUG
@@ -205,6 +207,7 @@ struct CuePointsView: View {
             CueCallsReviewSheet(trackTitle: track?.title ?? "", points: points, index: index, clock: clock, onChange: { try? context.save() })
         }
         .sheet(isPresented: $showCallerSettings) { CueCallerSettingsSheet() }
+        .sheet(isPresented: $showCameras) { CamerasSheet() }
         .alert("Start timecode", isPresented: $editingStart) {
             TextField("01:00:00:00", text: $startText)
                 .keyboardType(.numbersAndPunctuation)
@@ -424,21 +427,13 @@ struct CuePointsView: View {
                 .submitLabel(.done)
                 .onSubmit { field = nil; save() }
             CueLabelPresetBar(labels: labels.labels, onPick: { applyLabel($0, to: [p]) }, onEdit: { showPresets = true })
-            labelled("Call") {
-                HStack(spacing: 8) {
-                    Image(systemName: p.callNote.isEmpty ? "speaker" : "speaker.wave.1")
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundStyle(Theme.textTertiary)
-                        .frame(width: 16)
-                    TextField("What to say over comms", text: Binding(get: { p.callNote }, set: { p.callNote = $0; scheduleSave() }))
-                        .font(Theme.label).foregroundStyle(Theme.textPrimary)
-                        .focused($field, equals: .call)
-                        .submitLabel(.next)
-                        .onSubmit { nextCallNote(after: p) }
-                }
-                .fieldBox()
+            labelled(p.callCount > 1 ? "Calls" : "Call") {
+                // Stacked calls, one per line, with the camera and shot keys (CueCallStackViews.swift).
+                CueCallStackField(note: Binding(get: { p.callNote }, set: { p.callNote = $0; scheduleSave() }),
+                                  focus: $field, lineFocus: { .call($0) }, compact: !isPad,
+                                  onNextMark: { nextCallNote(after: p) }, onEditCameras: { showCameras = true })
+                    .id(p.id)
             }
-            .accessibilityHint("Return saves and moves to the next mark")
             HStack(alignment: .top, spacing: 10) {
                 labelled("Cue number") {
                     TextField(String(idx.position(of: p)), text: Binding(get: { p.cueID }, set: { p.cueID = $0; scheduleSave() }))
@@ -785,9 +780,10 @@ struct CuePointsView: View {
                     .onSubmit { save() }
                 HStack(spacing: 5) {
                     Text(fade.isEmpty ? type.name : "\(type.name) · Fade \(fade)")
-                    if !p.callNote.isEmpty {
+                    if !p.callLines.isEmpty {
                         Image(systemName: "speaker.wave.1").font(.system(size: 9))
-                        Text(p.callNote).lineLimit(1)
+                        if p.callCount > 1 { Text("\(p.callCount)").font(Theme.numeric(10, weight: .semibold)) }
+                        Text(CueCallStack.summary(p.callNote)).lineLimit(1)
                     }
                 }
                 .font(Theme.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
@@ -988,11 +984,17 @@ struct CuePointsView: View {
             }
             try? context.save()
             points = CuePoint.points(for: track.id, in: context)
-            if ProcessInfo.processInfo.arguments.contains("-cueCallerPreview") {
+            let args = ProcessInfo.processInfo.arguments
+            if args.contains("-cueCallerPreview") {
                 let notes = ["Intro hit": "Camera 3, push in slow", "Verse 1": "Camera 1, tight on vocal",
                              "Pre-chorus": "Jib, sweep stage left", "Chorus drop": "Wide on the band, all cameras",
-                             "Screens on": "Camera 4, hold the screens", "Bridge": "Camera 2, slow pull out"]
+                             "Screens on": "Camera 4, hold the screens", "Bridge": "Camera 2, slow pull out",
+                             // Stacked: three calls on one mark, and a same-frame mark in another lane.
+                             "Chorus content": "Steadicam, follow the singer"]
                 for p in points { if let n = notes[p.name] { p.callNote = n } }
+                if args.contains("-stackPreview"), let v = points.first(where: { $0.name == "Verse 1" }) {
+                    v.callNote = "Camera 3, push in\nCamera 1, tight on vocal\nCamera 2, wide"
+                }
                 if let drop = points.first(where: { $0.name == "Chorus drop" }) {
                     CueCallerUIModel.shared.setOverride("Abierto a la banda, todas las cámaras", markID: drop.id, language: "es-MX", note: drop.callNote)
                 }
@@ -1001,7 +1003,7 @@ struct CuePointsView: View {
             if ProcessInfo.processInfo.arguments.contains("-seedMulti") {
                 selection = Set(points.filter { $0.time >= 44 && $0.time <= 52 }.prefix(3).map(\.id)); selected = selection.first
             } else {
-                let pick = ProcessInfo.processInfo.arguments.contains("-cueCallerPreview") ? "Chorus drop" : "Build"
+                let pick = args.contains("-stackPreview") ? "Verse 1" : args.contains("-cueCallerPreview") ? "Chorus drop" : "Build"
                 select(points.first(where: { $0.name == pick })?.id)
             }
             span = 120
@@ -1173,7 +1175,7 @@ struct CuePointsView: View {
         let n = points[i + 1]
         select(n.id)
         seekSnapped(n.time)
-        Task { @MainActor in field = .call }
+        Task { @MainActor in field = .call(0) }
     }
 
     private func startPass() {

@@ -294,7 +294,7 @@ struct TimelineEditor: View {
                 let nextX = i + 1 < sorted.count ? vp.px(sorted[i + 1].time) : .infinity
                 guard px > -240, px < width + 4 else { continue }
                 let call = !p.callNote.isEmpty
-                let extra: CGFloat = 12 + (call ? 13 : 0)
+                let extra: CGFloat = 12 + (call ? 13 : 0) + (p.callCount > 1 ? 8 : 0)
                 let room = min(220, nextX - px - 3) - extra
                 let number = idx.number(of: p)
                 let label = TextFit.fit(number: number, name: p.name, font: font, width: room)
@@ -750,9 +750,17 @@ struct TimelineEditor: View {
                 l.clip(to: Path(flag))
                 l.draw(text, at: CGPoint(x: flag.minX + 6, y: flag.midY), anchor: .leading)
                 if f.call {
+                    // Speaker glyph for a call; stacked calls add a small count after it.
+                    let stack = p.callCount
                     var glyph = gc.resolve(Image(systemName: "speaker.wave.1.fill"))
                     glyph.shading = .color(ink.opacity(0.75))
-                    l.draw(glyph, in: CGRect(x: flag.maxX - 15, y: flag.midY - 4.5, width: 9, height: 9))
+                    let gx = flag.maxX - (stack > 1 ? 23 : 15)
+                    l.draw(glyph, in: CGRect(x: gx, y: flag.midY - 4.5, width: 9, height: 9))
+                    if stack > 1 {
+                        let n = gc.resolve(Text("\(min(stack, 9))").font(.system(size: 9, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(ink.opacity(0.75)))
+                        l.draw(n, at: CGPoint(x: gx + 11, y: flag.midY), anchor: .leading)
+                    }
                 }
             }
             _ = hair

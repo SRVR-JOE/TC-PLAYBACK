@@ -273,6 +273,32 @@ final class CueCallerUIModel {
         overrides[Self.overrideKey(markID, language)] = t.isEmpty ? nil : t
     }
 
+    /// The correction for one stacked line (nil = automatic translation).
+    func override(markID: UUID, language: String, line: String) -> String? {
+        if engine != nil { return CueCallTranslationStore.shared.override(markID: markID, language: language, line: line)?.text }
+        return overrides[Self.overrideKey(markID, language) + "|" + CueCallTranslationStore.normalize(line)]
+            ?? (CueCallStack.lines(line).count == 1 ? overrides[Self.overrideKey(markID, language)] : nil)
+    }
+
+    /// nil or blank clears the line's correction.
+    func setOverride(_ text: String?, markID: UUID, language: String, line: String) {
+        let t = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if engine != nil {
+            CueCallTranslationStore.shared.setOverride(markID: markID, language: language, line: line, text: t)
+            return
+        }
+        overrides[Self.overrideKey(markID, language) + "|" + CueCallTranslationStore.normalize(line)] = t.isEmpty ? nil : t
+    }
+
+    // MARK: Stacks
+
+    /// Stacked go calls that start early on `marks`, estimated from the operator's words (so it
+    /// follows edits at once, caller on or off): mark id → seconds from first word to the go.
+    func earlyStarts(_ marks: [CueCallMark], frame: TimeInterval = 1.0 / 30) -> [UUID: TimeInterval] {
+        CueCallScheduler.estimatedEarlyStarts(marks: marks, settings: settings, noteLanguage: noteLanguage,
+                                              cameraNames: CueCameraPresetStore.shared.presets.customNames, frame: frame)
+    }
+
     // MARK: Output channels
 
     /// Channels of the current output route (names from the interface when it gives them).

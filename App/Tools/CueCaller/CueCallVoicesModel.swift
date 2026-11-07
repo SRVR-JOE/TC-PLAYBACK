@@ -214,8 +214,7 @@ final class CueCallVoicesModel {
         let caller = CueCaller.shared
         let settings = caller.settings
         guard settings.areas.contains(where: { $0.enabled && ElevenLabsVoiceID.isEleven($0.voiceID) }) else { return [] }
-        let prepared = await CueCallScheduler.prepare(marks: marks, settings: settings, noteLanguage: caller.noteLanguage,
-                                                      translator: caller.translator, phrase: caller.phrase)
+        let prepared = await caller.preparedCalls(for: marks)
         var seen = Set<String>(), out: [ElevenLabsSpeechRequest] = []
         for p in prepared {
             guard let area = settings.areas.first(where: { $0.id == p.call.areaID }),
