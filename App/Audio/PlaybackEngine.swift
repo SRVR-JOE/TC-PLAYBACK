@@ -156,6 +156,23 @@ final class PlaybackEngine {
     /// Set when the input couldn't be opened (permission off / no input). Cleared on success.
     private(set) var inputProblem: String?
 
+    // MARK: Additive API (cue caller)
+
+    /// Hardware output channels the engine drives (2 until a multichannel interface is in use).
+    var outputChannelCount: Int { graph?.channelCount ?? 2 }
+    /// The live graph's cue caller voices; nil before the graph exists. The graph is rebuilt on
+    /// route / rate / channel changes, so callers re-read this.
+    var cueCallMixer: CueCallMixer? { graph?.core.callMixer }
+    /// Output latency plus one buffer, as measured at the last route refresh.
+    var measuredOutputLatency: TimeInterval { outputLatency }
+    /// Make sure the output is running (with nothing loaded it plays silence) so a test call can sound.
+    func startOutputForCalls() {
+        ensureSetup()
+        _ = try? ensureGraph()
+        activateSession()
+        startEngineIfNeeded()
+    }
+
     // MARK: Internals (not observed)
     @ObservationIgnored private var graph: AudioGraph?
     @ObservationIgnored private var streamer: FileStreamer?
@@ -438,6 +455,9 @@ final class PlaybackEngine {
             try? s.setPreferredSampleRate(48_000)
             try? s.setPreferredIOBufferDuration(0.005)
             try s.setActive(true)
+            // Cue caller: open every output channel the interface has (no-op on stereo outputs).
+            let maxOut = s.maximumOutputNumberOfChannels
+            if maxOut > 2, s.outputNumberOfChannels != maxOut { try? s.setPreferredOutputNumberOfChannels(maxOut) }
         } catch {
             lastError = "The audio session couldn't be set up. Another app may be using audio exclusively."
         }
@@ -696,8 +716,12 @@ final class PlaybackEngine {
     /// Restart (or rebuild, if the hardware rate changed) after the system stopped the engine.
     private func restartAfterSystemStop() {
         guard let g = graph else { return }
-        let hwRate = g.engine.outputNode.outputFormat(forBus: 0).sampleRate
-        if hwRate > 0 && abs(hwRate - g.core.sampleRate) > 0.5 {
+        let hwFormat = g.engine.outputNode.outputFormat(forBus: 0)
+        let hwRate = hwFormat.sampleRate
+        // Rebuild when the rate changed, or when a multichannel interface came or went (cue caller).
+        let hwChannels = Int(hwFormat.channelCount)
+        let channelsChanged = hwChannels > 0 && max(2, hwChannels) != g.channelCount
+        if (hwRate > 0 && abs(hwRate - g.core.sampleRate) > 0.5) || channelsChanged {
             let resume = transport == .playing
             teardownGraph()
             rebuildPreservingPosition(resume: resume)

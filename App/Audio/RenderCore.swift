@@ -60,6 +60,8 @@ final class RenderCore: @unchecked Sendable {
     let outputTap: SPSCRingBuffer
     let outputTapEnabled = Atomic<Bool>(false)
     let outputTapClock = TapClock()
+    /// Cue caller voices, mixed onto hardware channels after program routing. Additive.
+    let callMixer: CueCallMixer
 
     // MARK: Control (main → render)
     let sourceKind = Atomic<Int>(0)
@@ -116,6 +118,7 @@ final class RenderCore: @unchecked Sendable {
 
     init(sampleRate: Double) {
         self.sampleRate = sampleRate
+        callMixer = CueCallMixer(sampleRate: sampleRate)
         routingRampFrames = max(1, Int(sampleRate * 0.010))
         transportRampFrames = min(Self.maxChunk, max(1, Int(sampleRate * 0.005)))
         ring = SPSCRingBuffer(channels: 2, minimumCapacity: Int(sampleRate * 2.5))
