@@ -111,7 +111,7 @@ enum CuePointSelectionMath {
     }
 
     static func snap(_ t: TimeInterval, fps: Double, duration: TimeInterval) -> TimeInterval {
-        min(max(0, (t * fps).rounded() / fps), duration)
+        FrameGrid.snap(t, fps: fps, duration: duration)
     }
 }
 

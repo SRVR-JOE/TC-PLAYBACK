@@ -51,9 +51,11 @@ struct WaveformOverviewView: View {
     var channelCount: Int
     var duration: TimeInterval
     var scrubEnabled: Bool = true
+    /// Additive: the track's timecode, so the scrub readout shows TC and seeks snap to its frames.
+    var clock: CuePointClock? = nil
     var body: some View {
         WaveformOverviewContent(overview: overview, channelCount: channelCount, duration: duration,
-                                scrubEnabled: scrubEnabled)
+                                scrubEnabled: scrubEnabled, clock: clock)
     }
 }
 

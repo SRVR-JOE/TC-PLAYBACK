@@ -1,4 +1,5 @@
 import SwiftUI
+import TCKit
 
 // Owned by the VISUALS agent. Implementation behind `WaveformOverviewView` (see VisualsAPI.swift).
 
@@ -7,6 +8,9 @@ struct WaveformOverviewContent: View {
     var channelCount: Int
     var duration: TimeInterval
     var scrubEnabled: Bool
+    /// The track's timecode (start + rate) for the scrub readout and frame snapping; nil = the
+    /// engine's clock rate from 00:00:00:00.
+    var clock: CuePointClock? = nil
 
     @Environment(\.visualsDataSource) private var data
     @State private var dragX: CGFloat?
@@ -15,6 +19,18 @@ struct WaveformOverviewContent: View {
     private static let upcoming = Theme.textTertiary
 
     private var length: TimeInterval { duration > 0 ? duration : data.duration }
+    private var tc: CuePointClock { clock ?? CuePointClock(start: Timecode(rate: data.clock.rate ?? .fps30)) }
+
+    /// Seek target for a scrub released at `x` of `width`: always a whole frame of the track's rate.
+    static func scrubTime(x: CGFloat, width: CGFloat, length: TimeInterval, clock: CuePointClock) -> TimeInterval {
+        let f = Double(min(max(0, x / max(1, width)), 1))
+        return clock.snapped(f * length, duration: length)
+    }
+
+    /// Scrub readout: the track's timecode at that point, "HH:MM:SS:FF".
+    static func scrubLabel(x: CGFloat, width: CGFloat, length: TimeInterval, clock: CuePointClock) -> String {
+        clock.label(at: scrubTime(x: x, width: width, length: length, clock: clock))
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -25,32 +41,36 @@ struct WaveformOverviewContent: View {
             }
             .overlay(alignment: .topLeading) {
                 if let dragX, length > 0 {
-                    let t = Double(dragX / max(1, w)) * length
-                    Text(VisualsFormat.preciseTime(t))
+                    Text(Self.scrubLabel(x: dragX, width: w, length: length, clock: tc))
                         .font(Theme.numeric(11))
                         .foregroundStyle(Theme.textPrimary)
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(RoundedRectangle(cornerRadius: 3).fill(Theme.surfaceRaised))
                         .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Theme.hairline, lineWidth: 1))
                         .fixedSize()
-                        .alignmentGuide(.leading) { d in
-                            -min(max(0, dragX - d.width / 2), max(0, w - d.width))
-                        }
-                        .offset(y: 3)
+                        // SF Mono 11: "HH:MM:SS:FF" plus padding is ~86 pt; centred on the finger, kept inside.
+                        .offset(x: min(max(0, dragX - 43), max(0, w - 86)), y: 3)
                         .allowsHitTesting(false)
                 }
             }
             .contentShape(Rectangle())
             .gesture(scrubEnabled && length > 0 ? scrub(width: w) : nil)
+            #if DEBUG
+            // -scrubPreview <0…1>: hold the scrub readout at that point (screenshots).
+            .onAppear {
+                let a = ProcessInfo.processInfo.arguments
+                if let i = a.firstIndex(of: "-scrubPreview"), i + 1 < a.count, let f = Double(a[i + 1]) { dragX = w * f }
+            }
+            #endif
         }
         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         .accessibilityElement()
         .accessibilityLabel("Waveform")
-        .accessibilityValue(length > 0 ? "\(VisualsFormat.time(data.currentTime)) of \(VisualsFormat.time(length))" : "Empty")
+        .accessibilityValue(length > 0 ? "\(tc.label(at: data.currentTime)) of \(tc.label(at: length))" : "Empty")
         .accessibilityAdjustableAction { dir in
+            // One frame per swipe.
             guard scrubEnabled, length > 0 else { return }
-            let step: TimeInterval = dir == .increment ? 5 : -5
-            data.seek(to: min(length, max(0, data.currentTime + step)))
+            data.seek(to: FrameGrid.step(from: data.currentTime, frames: dir == .increment ? 1 : -1, rate: tc.rate, duration: length))
         }
     }
 
@@ -58,8 +78,7 @@ struct WaveformOverviewContent: View {
         DragGesture(minimumDistance: 0)
             .onChanged { v in dragX = min(width, max(0, v.location.x)) }
             .onEnded { v in
-                let x = min(width, max(0, v.location.x))
-                data.seek(to: Double(x / max(1, width)) * length)
+                data.seek(to: Self.scrubTime(x: v.location.x, width: width, length: length, clock: tc))
                 dragX = nil
             }
     }
@@ -143,5 +162,45 @@ struct WaveformOverviewContent: View {
         gc.fill(Path(roundedRect: box, cornerRadius: 2), with: .color(Theme.surfaceRaised))
         gc.stroke(Path(roundedRect: box.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 2), with: .color(Theme.textTertiary), lineWidth: 1)
         gc.draw(text, at: CGPoint(x: box.midX, y: box.midY))
+    }
+}
+
+/// Frame step keys beside the play bar: −10f −1f +1f +10f (−1f +1f when compact). Each press moves
+/// the playhead that many whole frames of the track's rate; while playing it jumps and keeps playing.
+struct FrameStepControl: View {
+    var clock: CuePointClock
+    var duration: TimeInterval
+    var enabled: Bool
+    var compact = false
+    @Environment(\.visualsDataSource) private var data
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if !compact { key(-10) }
+            key(-1)
+            key(1)
+            if !compact { key(10) }
+        }
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
+    }
+
+    /// Where a press of `n` frames lands from `t`.
+    static func target(from t: TimeInterval, frames n: Int, clock: CuePointClock, duration: TimeInterval) -> TimeInterval {
+        FrameGrid.step(from: t, frames: n, rate: clock.rate, duration: duration > 0 ? duration : nil)
+    }
+
+    private func key(_ n: Int) -> some View {
+        Button {
+            data.seek(to: Self.target(from: data.currentTime, frames: n, clock: clock, duration: duration))
+            Haptics.tick()
+        } label: {
+            Text(n < 0 ? "\u{2212}\(-n)f" : "+\(n)f")
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .frame(minWidth: compact ? 30 : 34)
+        }
+        .buttonStyle(VisualsKeyStyle())
+        .accessibilityLabel(abs(n) == 1 ? (n < 0 ? "Back one frame" : "Forward one frame")
+                                        : (n < 0 ? "Back \(-n) frames" : "Forward \(n) frames"))
     }
 }

@@ -245,9 +245,14 @@ struct WaveformPanel: View {
     var framed = true
     @Bindable private var shell = ShellModel.shared
     @AppStorage(SettingsKey.showLock) private var showLock = false
+    @Environment(\.horizontalSizeClass) private var hSize
     var body: some View {
         let cue = shell.activeCue ?? shell.standbyCue
         let track = cue?.kind == .track ? cue?.track : nil
+        let clock = CuePointClock.playback(for: track)
+        let canStep = !showLock && shell.activeCue != nil && shell.activeCue?.kind == .track
+        let steps = FrameStepControl(clock: clock, duration: cue?.displayDuration ?? 0, enabled: canStep,
+                                     compact: hSize == .compact)
         let content = VStack(alignment: .leading, spacing: 6) {
             if showsHeader {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -265,16 +270,21 @@ struct WaveformPanel: View {
                         Label("Scrub locked", systemImage: "lock")
                             .font(Theme.caption).foregroundStyle(Theme.textTertiary)
                     }
+                    steps
                     if let cue {
                         Text(Fmt.duration(cue.displayDuration))
                             .font(Theme.numeric(12, weight: .regular)).foregroundStyle(Theme.textSecondary)
                     }
                 }
             }
-            WaveformOverviewView(overview: track?.overview, channelCount: track?.channelCount ?? 2,
-                                 duration: cue?.displayDuration ?? 0, scrubEnabled: !showLock && shell.activeCue != nil)
-                .frame(height: height)
-                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            HStack(spacing: 8) {
+                WaveformOverviewView(overview: track?.overview, channelCount: track?.channelCount ?? 2,
+                                     duration: cue?.displayDuration ?? 0, scrubEnabled: !showLock && shell.activeCue != nil,
+                                     clock: clock)
+                    .frame(height: height)
+                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                if !showsHeader { steps }
+            }
         }
         if framed { content.panel(padding: showsHeader ? 10 : 6) } else { content }
     }

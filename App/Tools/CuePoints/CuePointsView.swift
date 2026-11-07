@@ -22,7 +22,7 @@ struct CuePointsView: View {
     @State private var startText = ""
     @State private var lastMarkID: UUID?
     @FocusState private var field: Field?
-    @State private var peaks: [Float] = []
+    @State private var waveform: TimelineWaveform?
     /// Primary selection (the inspector's mark); always inside `selection` when set.
     @State private var selected: UUID?
     @State private var selection: Set<UUID> = []
@@ -102,10 +102,15 @@ struct CuePointsView: View {
                             inspectorPanel.frame(width: min(420, geo.size.width * 0.36))
                         }
                         .padding(Theme.pad)
-                        .frame(height: geo.size.height * 0.52)
+                        .frame(maxHeight: .infinity)
                         // VIDEO hook: slot above the timeline (wide layout).
                         timelineBar(track)
-                        timeline(track).frame(maxHeight: .infinity)
+                        // The timeline takes what its lanes and audio need (up to half the
+                        // screen); the monitor above takes the rest.
+                        timeline(track)
+                            .frame(height: min(geo.size.height * 0.48, max(geo.size.height * 0.3,
+                                TimelineEditor.idealHeight(lanes: store.visible.count, beatGrid: beatGrid)
+                                + (CueVideoController.shared.timelineLane == nil ? 0 : 60))))
                             .padding([.horizontal, .bottom], Theme.pad)
                     } else {
                         header(track)
@@ -246,17 +251,19 @@ struct CuePointsView: View {
     // MARK: Timeline
 
     private func timeline(_ track: Track) -> some View {
-        TimelineEditor(duration: track.duration, peaks: peaks, points: points, clock: clock,
+        TimelineEditor(duration: track.duration, waveform: waveform, points: points, clock: clock,
                        // Heard position: the line crosses a mark when you hear it (speaker delay allowed for).
                        playhead: engine.transport == .playing && allowSpeakerDelay
                            ? max(0, engine.currentTime - CueTriggerClock.outputDelay) : engine.currentTime,
                        isPlaying: engine.transport == .playing,
                        selected: $selected,
-                       onSeek: { if loaded { engine.seek(to: $0) } },
+                       onSeek: { seekSnapped($0) },
                        onMove: move, span: $span,
                        beatGrid: beatGrid, // BEATGRID hook
                        lanes: store.visible, index: index, selection: $selection, selectMode: selectMode,
                        onRename: { p, name in p.name = name; save() },
+                       audioChannel: track.ltcChannel == "left" ? "Right" : (track.channelCount > 1 ? "Left" : "Mono"),
+                       livePlayhead: { CueTriggerClock.shared.heardTime },
                        videoLane: CueVideoController.shared.timelineLane) // VIDEO hook
             .id(track.id)
             .overlay(alignment: .bottom) { namingOverlay.padding(8) }
@@ -294,7 +301,7 @@ struct CuePointsView: View {
                 Button { zoom(0.5) } label: { Image(systemName: "plus.magnifyingglass") }
                     .buttonStyle(.plain).foregroundStyle(Theme.textSecondary).accessibilityLabel("Zoom in")
             }
-            Button { span = max(2, track.duration) } label: { Text("Fit").font(Theme.label).fixedSize() }
+            Button { span = max(TimelineEditor.minSpan, track.duration) } label: { Text("Fit").font(Theme.label).fixedSize() }
                 .buttonStyle(.plain).foregroundStyle(Theme.textSecondary).accessibilityLabel("Zoom to fit")
             BeatGridButton(grid: $beatGrid, track: track, clock: clock, compact: !isPad) // BEATGRID hook
             CueFlashMenu(compact: !isPad)
@@ -365,19 +372,19 @@ struct CuePointsView: View {
         .accessibilityLabel("Marking options")
     }
 
-    /// Slider 0 = whole track, 1 = 2 seconds (log scale, like an editor's zoom).
+    /// Slider 0 = whole track, 1 = about a frame across (log scale, like an editor's zoom).
     private func zoomValue(_ track: Track) -> Double {
-        let maxSpan = max(2.0, track.duration)
-        guard maxSpan > 2 else { return 0 }
-        return 1 - log(span / 2) / log(maxSpan / 2)
+        let lo = TimelineEditor.minSpan, maxSpan = max(lo, track.duration)
+        guard maxSpan > lo else { return 0 }
+        return min(1, max(0, 1 - log(span / lo) / log(maxSpan / lo)))
     }
     private func setZoom(_ v: Double, _ track: Track) {
-        let maxSpan = max(2.0, track.duration)
-        span = 2 * pow(maxSpan / 2, 1 - v)
+        let lo = TimelineEditor.minSpan, maxSpan = max(lo, track.duration)
+        span = lo * pow(maxSpan / lo, 1 - v)
     }
     private func zoom(_ f: Double) {
         guard let track else { return }
-        span = min(max(2, span * f), max(2, track.duration))
+        span = min(max(TimelineEditor.minSpan, span * f), max(TimelineEditor.minSpan, track.duration))
     }
 
     // MARK: Inspector
@@ -629,10 +636,13 @@ struct CuePointsView: View {
     private var transport: some View {
         HStack(spacing: 10) {
             key("backward.end", "Previous point") { stepPoint(-1) }
-            key("gobackward.5", "Back 5 seconds") { nudgePlayhead(-5) }
+            // iPhone trades the 5 s keys (still on J / L) for frame steps.
+            if isPad { key("gobackward.5", "Back 5 seconds") { nudgePlayhead(-5) } }
+            frameKey(-1)
             key(engine.transport == .playing ? "pause.fill" : "play.fill",
                 engine.transport == .playing ? "Pause" : "Play") { togglePlay() }
-            key("goforward.5", "Forward 5 seconds") { nudgePlayhead(5) }
+            frameKey(1)
+            if isPad { key("goforward.5", "Forward 5 seconds") { nudgePlayhead(5) } }
             key("forward.end", "Next point") { stepPoint(1) }
             // Fires on touch-down so a live mark lands when the finger hits, not on release.
             HStack(spacing: 8) {
@@ -658,13 +668,28 @@ struct CuePointsView: View {
             Image(systemName: symbol)
                 .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(loaded ? Theme.textPrimary : Theme.textTertiary)
-                .frame(width: isPad ? 64 : 46, height: 56)
+                .frame(width: isPad ? 54 : 46, height: 56)
                 .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: Theme.corner))
                 .overlay(RoundedRectangle(cornerRadius: Theme.corner).strokeBorder(Theme.hairline, lineWidth: 1))
         }
         .buttonStyle(KeyPressStyle())
         .disabled(!loaded)
         .accessibilityLabel(label)
+    }
+
+    /// One-frame playhead step (← / → on a keyboard).
+    private func frameKey(_ n: Int) -> some View {
+        Button { frameStep(n) } label: {
+            Text(n < 0 ? "\u{2212}\(-n)f" : "+\(n)f")
+                .font(.system(size: 16, weight: .semibold).monospacedDigit())
+                .foregroundStyle(loaded ? Theme.textPrimary : Theme.textTertiary)
+                .frame(width: isPad ? 54 : 46, height: 56)
+                .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: Theme.corner))
+                .overlay(RoundedRectangle(cornerRadius: Theme.corner).strokeBorder(Theme.hairline, lineWidth: 1))
+        }
+        .buttonStyle(KeyPressStyle())
+        .disabled(!loaded)
+        .accessibilityLabel(n < 0 ? "Back one frame" : "Forward one frame")
     }
 
     /// Type pads under the transport (always there for live marking), or the label pass.
@@ -893,6 +918,13 @@ struct CuePointsView: View {
     // MARK: Actions
 
     private func initialTrack() {
+        #if DEBUG
+        // -cuePointsTrack <title>: open a specific track (screenshots/QA).
+        let a = ProcessInfo.processInfo.arguments
+        if track == nil, let i = a.firstIndex(of: "-cuePointsTrack"), i + 1 < a.count {
+            track = tracks.first(where: { $0.title.contains(a[i + 1]) })
+        }
+        #endif
         if track == nil {
             track = ShellModel.shared.standbyCue?.track ?? ShellModel.shared.playlist?.orderedCues.compactMap(\.track).first ?? tracks.first
         }
@@ -904,9 +936,8 @@ struct CuePointsView: View {
         clock = CuePointClock.forTrack(track)
         beatGrid = BeatGridStore.load(trackID: track.id) // BEATGRID hook
         reload()   // drops selections that aren't in this track
-        peaks = []
         let url = track.fileURL, ch = track.ltcChannel == "left" ? 1 : 0
-        Task { let p = await TimelinePeaks.load(url: url, channel: ch); if self.track?.fileURL == url { peaks = p } }
+        if waveform?.url != url || waveform?.channel != ch { waveform = TimelineWaveform(url: url, channel: ch) }
         if engine.transport == .playing, !loaded { blocked = true; return }
         blocked = false
         guard !loaded, !track.isMissing else { return }
@@ -916,6 +947,12 @@ struct CuePointsView: View {
         try? engine.load(.file(track.fileURL), routing: r)
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-seedMarks") { engine.seek(to: 47) }
+        // -timelineSpan <s> / -playheadAt <s>: fixed zoom and position for screenshots.
+        let args = ProcessInfo.processInfo.arguments
+        func arg(_ k: String) -> Double? { args.firstIndex(of: k).flatMap { $0 + 1 < args.count ? Double(args[$0 + 1]) : nil } }
+        if let s = arg("-timelineSpan") { span = s }
+        if let t = arg("-playheadAt") { engine.seek(to: t) }
+        if args.contains("-autoPlay"), args.contains("-silentOutput") { engine.play() } // QA: only ever silent
         #endif
     }
 
@@ -1127,7 +1164,7 @@ struct CuePointsView: View {
         guard let i = points.firstIndex(where: { $0.id == p.id }), i + 1 < points.count else { field = nil; return }
         let n = points[i + 1]
         select(n.id)
-        if loaded { engine.seek(to: n.time) }
+        seekSnapped(n.time)
         Task { @MainActor in field = .call }
     }
 
@@ -1144,7 +1181,7 @@ struct CuePointsView: View {
         let p = points[i]
         passText = p.name
         select(p.id)
-        if loaded { engine.seek(to: p.time) }
+        seekSnapped(p.time)
         passFocus = true
     }
 
@@ -1168,16 +1205,17 @@ struct CuePointsView: View {
     /// Names live on the model objects; nudge SwiftUI to redraw dependents straight away.
     private func rebuildIndexDependents() { points = points }
 
-    private func snapped(_ t: TimeInterval) -> TimeInterval {
-        let f = clock.rate.fps
-        return max(0, (t * f).rounded() / f)
+    private func snapped(_ t: TimeInterval) -> TimeInterval { clock.snapped(t, duration: track?.duration) }
+
+    /// Every playhead move in this screen lands on a whole frame of the track's rate.
+    private func seekSnapped(_ t: TimeInterval) {
+        guard loaded else { return }
+        engine.seek(to: snapped(t))
     }
 
     /// Moves a mark by whole frames (counted on the frame grid, so repeated taps never drift).
     private func shift(_ p: CuePoint, frames n: Int) {
-        let f = clock.rate.fps
-        let frame = (p.time * f).rounded() + Double(n)
-        p.time = min(max(0, frame / f), track?.duration ?? .infinity)
+        p.time = FrameGrid.step(from: p.time, frames: n, rate: clock.rate, duration: track?.duration)
         save()
     }
 
@@ -1232,7 +1270,7 @@ struct CuePointsView: View {
     private func frameStep(_ n: Int) {
         guard loaded, let track else { return }
         if engine.transport == .playing { engine.pause() }
-        engine.seek(to: min(max(0, snapped(engine.currentTime) + Double(n) / clock.rate.fps), track.duration))
+        engine.seek(to: FrameGrid.step(from: engine.currentTime, frames: n, rate: clock.rate, duration: track.duration))
     }
 
     private func scheduleSave() {
@@ -1258,19 +1296,18 @@ struct CuePointsView: View {
 
     private func nudgePlayhead(_ s: TimeInterval) {
         guard loaded, let track else { return }
-        engine.seek(to: min(max(0, engine.currentTime + s), track.duration))
+        engine.seek(to: snapped(min(max(0, engine.currentTime + s), track.duration)))
     }
 
     private func jump(to p: CuePoint) {
         select(p.id)
-        guard loaded else { return }
-        engine.seek(to: p.time)
+        seekSnapped(p.time)
     }
 
     private func stepPoint(_ dir: Int) {
         let now = engine.currentTime
         let target = dir > 0 ? points.first(where: { $0.time > now + 0.05 }) : points.last(where: { $0.time < now - 0.25 })
-        if let target { jump(to: target) } else if dir < 0 { engine.seek(to: 0) }
+        if let target { jump(to: target) } else if dir < 0 { seekSnapped(0) }
     }
 
     private func rebuildExports() {
