@@ -22,6 +22,17 @@ final class CuePoint {
     /// Fade as typed: "" (default), "2" seconds, "+" (until the next point of the same type),
     /// "1/2" (split: 1 s up / 2 s down). Resolve with `CueFade.resolve`.
     var fade: String = ""
+    // Crew shot script (App/Crew, behind FeatureFlags.crewCueing) — additive, defaulted.
+    /// Camera this shot cuts to; nil = not a shot.
+    var camera: Int? = nil
+    /// Shot number as written in the script ("12", "12A").
+    var shotNumber: String = ""
+    /// Shot size, free text; presets in `ShotSize` (WS / MS / CU / ECU…).
+    var shotSize: String = ""
+    /// Director's note for the operator ("push in on the drop").
+    var shotNote: String = ""
+    /// The shot lasts until the next cut in the same lane (false = a momentary cue).
+    var holdUntilNext: Bool = true
 
     init(trackID: UUID, time: TimeInterval, name: String, colorHex: String? = nil) {
         self.id = UUID(); self.trackID = trackID; self.time = time; self.name = name

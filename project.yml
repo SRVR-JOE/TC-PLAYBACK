@@ -43,10 +43,12 @@ targets:
         INFOPLIST_KEY_UIFileSharingEnabled: YES
         INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "TC Playback finds other devices running the same show on your local network so crew can follow along."
     info:
       path: App/Resources/Info.plist
       properties:
         UIBackgroundModes: [audio]
+        NSBonjourServices: [_tcplayback._tcp]
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         ITSAppUsesNonExemptEncryption: false

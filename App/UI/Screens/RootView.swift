@@ -59,7 +59,8 @@ struct RootView: View {
             if UIDevice.current.userInterfaceIdiom == .pad { PadRoot() } else { PhoneRoot() }
         }
         #if DEBUG
-        DemoRotator { content }
+        // -crewPreview: crew framework developer preview (FeatureFlags.crewCueing, DEBUG only).
+        if CrewPreview.isRequested { CrewPreviewScreen() } else { DemoRotator { content } }
         #else
         content
         #endif
