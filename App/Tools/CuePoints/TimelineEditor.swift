@@ -310,6 +310,7 @@ struct TriggerReadout: View {
             if let hit = points.last(where: { $0.time > old && $0.time <= new }) {
                 lastHit = (hit.id, Date())
                 Haptics.tick()
+                CueFlash.fire(markHex: hit.colorHex)
             }
         }
         .accessibilityElement(children: .combine)

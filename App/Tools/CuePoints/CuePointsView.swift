@@ -72,10 +72,19 @@ struct CuePointsView: View {
         .background(Theme.background.ignoresSafeArea())
         .toolbar {
             ToolbarItem(placement: .principal) { trackMenu }
-            ToolbarItem(placement: .topBarTrailing) { exportMenu }
+            ToolbarItem(placement: .topBarTrailing) { exportMenu(prominent: false) }
         }
         .onAppear(perform: initialTrack)
+        #if DEBUG
+        .task {
+            // -flashTest: fire the flash 2 s after opening (QA only).
+            if ProcessInfo.processInfo.arguments.contains("-flashTest") {
+                try? await Task.sleep(for: .seconds(2)); CueFlash.fire(markHex: CuePointColor.red.rawValue)
+            }
+        }
+        #endif
         .onDisappear {
+            Torch.off()
             if loaded { engine.stop() }
         }
         .onChange(of: track?.id) { _, _ in open() }
@@ -137,19 +146,23 @@ struct CuePointsView: View {
     /// Editor-style strip above the timeline: playhead TC, marker count, zoom slider.
     private func timelineBar(_ track: Track) -> some View {
         HStack(spacing: 12) {
-            Text("Timeline").font(Theme.sectionHeader).foregroundStyle(Theme.textSecondary)
-            Text("\(points.count) mark\(points.count == 1 ? "" : "s")").font(Theme.caption).foregroundStyle(Theme.textTertiary)
-            Spacer()
+            if isPad {
+                Text("Timeline").font(Theme.sectionHeader).foregroundStyle(Theme.textSecondary)
+                Text("\(points.count) mark\(points.count == 1 ? "" : "s")").font(Theme.caption).foregroundStyle(Theme.textTertiary)
+            }
+            Spacer(minLength: 0)
             Button { zoom(2) } label: { Image(systemName: "minus.magnifyingglass") }
                 .buttonStyle(.plain).foregroundStyle(Theme.textSecondary).accessibilityLabel("Zoom out")
             Slider(value: Binding(get: { zoomValue(track) }, set: { setZoom($0, track) }), in: 0...1)
-                .frame(width: isPad ? 220 : 120)
+                .frame(width: isPad ? 220 : 70)
                 .tint(Theme.textSecondary)
                 .accessibilityLabel("Zoom")
             Button { zoom(0.5) } label: { Image(systemName: "plus.magnifyingglass") }
                 .buttonStyle(.plain).foregroundStyle(Theme.textSecondary).accessibilityLabel("Zoom in")
             Button { span = max(2, track.duration) } label: { Text("Fit").font(Theme.label) }
                 .buttonStyle(.plain).foregroundStyle(Theme.textSecondary).accessibilityLabel("Zoom to fit")
+            CueFlashMenu(compact: !isPad)
+            exportMenu(prominent: true)
         }
         .padding(.horizontal, Theme.pad).padding(.vertical, 8)
     }
@@ -395,7 +408,7 @@ struct CuePointsView: View {
         .accessibilityLabel("Track, \(track?.title ?? "none")")
     }
 
-    private var exportMenu: some View {
+    private func exportMenu(prominent: Bool) -> some View {
         Menu {
             Section("Export \(points.count) point\(points.count == 1 ? "" : "s")") {
                 ForEach(exports) { f in
@@ -408,7 +421,18 @@ struct CuePointsView: View {
                 Toggle("Section at each point", isOn: $options.sectionBreaks)
             }
         } label: {
-            Label("Export", systemImage: "square.and.arrow.up")
+            if prominent {
+                HStack(spacing: 6) {
+                    Image(systemName: "square.and.arrow.up")
+                    Text("Export")
+                }
+                .font(Theme.label.weight(.semibold))
+                .foregroundStyle(points.isEmpty ? Theme.textTertiary : Theme.background)
+                .padding(.horizontal, 12).frame(height: 30)
+                .background(points.isEmpty ? Theme.surfaceRaised : Theme.textPrimary, in: RoundedRectangle(cornerRadius: 4))
+            } else {
+                Label("Export", systemImage: "square.and.arrow.up")
+            }
         }
         .disabled(points.isEmpty)
         .onChange(of: options) { _, _ in rebuildExports() }
