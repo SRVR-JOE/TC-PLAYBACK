@@ -12,6 +12,7 @@ struct TrackMarksStrip: View {
     @Query(sort: \CuePoint.time) private var allPoints: [CuePoint]
     @AppStorage("cuePoints.allowSpeakerDelay") private var allowSpeakerDelay = true
     private let types = CuePointTypeStore.shared
+    @Bindable private var caller = CueCallerUIModel.shared
 
     var body: some View {
         let cue = shell.activeCue ?? shell.standbyCue
@@ -28,6 +29,7 @@ struct TrackMarksStrip: View {
             // Light the mark up for half a second as it's heard.
             let lit = running && current.map { t - $0.time < 0.5 } == true
 
+            HStack(spacing: 12) {
             Group {
                 if track == nil {
                     placeholder(cue == nil ? "No track cued" : "This cue isn't a track")
@@ -54,6 +56,10 @@ struct TrackMarksStrip: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            divider
+            CueCallerStripControl(compact: compact, fallbackNext: nextCall(points, after: t), running: running)
+            }
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         }
@@ -71,6 +77,18 @@ struct TrackMarksStrip: View {
         let e = PlaybackEngine.shared
         guard running else { return e.currentTime }
         return max(0, e.preciseTime - (allowSpeakerDelay ? CueTriggerClock.outputDelay : 0))
+    }
+
+    /// The next mark the caller would speak (stand-in until the engine reports its own).
+    private func nextCall(_ points: [CuePoint], after t: TimeInterval) -> CueCallerUpcoming? {
+        let s = caller.settings
+        guard let p = points.first(where: { $0.time > t + 0.0005 && (!s.onlyMarksWithNotes || !$0.callNote.trimmingCharacters(in: .whitespaces).isEmpty) })
+        else { return nil }
+        let remaining = p.time - max(0, t)
+        let standby = s.sayStandby && remaining > s.standbyLead
+        let note = p.callNote.trimmingCharacters(in: .whitespaces)
+        return CueCallerUpcoming(markID: p.id, markName: p.name, text: note.isEmpty ? p.name : note,
+                                 kind: standby ? .standby : .go, secondsToGo: standby ? remaining - s.standbyLead : remaining)
     }
 
     private var divider: some View { Rectangle().fill(Theme.hairline).frame(width: Theme.hairlineWidth).padding(.vertical, 10) }
@@ -116,6 +134,12 @@ struct TrackMarksStrip: View {
                         HStack(spacing: 5) {
                             Rectangle().fill(color(p, index)).frame(width: 3)
                             Text(p.name).font(.system(size: 12, weight: on ? .semibold : .regular)).lineLimit(1)
+                            if !p.callNote.isEmpty {
+                                Image(systemName: "speaker.wave.1")
+                                    .font(.system(size: 9, weight: .regular))
+                                    .foregroundStyle(Theme.textTertiary)
+                                    .accessibilityLabel("Has a call")
+                            }
                         }
                         .padding(.trailing, 8)
                         .frame(height: 26)

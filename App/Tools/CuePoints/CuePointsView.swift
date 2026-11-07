@@ -54,6 +54,9 @@ struct CuePointsView: View {
     @State private var passIndex: Int?
     @State private var passText = ""
     @FocusState private var passFocus: Bool
+    // Cue caller
+    @State private var showCalls = false
+    @State private var showCallerSettings = false
 
     // VIDEO hook: optional panel shown above the timeline in both layouts (video sync builder).
 
@@ -74,7 +77,7 @@ struct CuePointsView: View {
     private static var reseeded = false
     #endif
 
-    private enum Field: Hashable { case row(UUID), name, cueNumber, fade }
+    private enum Field: Hashable { case row(UUID), name, cueNumber, fade, call }
 
     struct ExportFile: Identifiable { let id = UUID(); let format: CuePointFormat; let title: String; let detail: String; let urls: [URL] }
 
@@ -126,10 +129,21 @@ struct CuePointsView: View {
         .background(Theme.background.ignoresSafeArea())
         .toolbar {
             ToolbarItem(placement: .principal) { trackMenu }
+            ToolbarItem(placement: .topBarTrailing) {
+                CueCallerToolbarMenu(compact: !isPad, onShowCalls: { showCalls = true }, onShowSettings: { showCallerSettings = true })
+            }
             ToolbarItem(placement: .topBarTrailing) { exportMenu(prominent: false) }
             ToolbarItem(placement: .topBarTrailing) { if let track { CueVideoMenu(track: track) } } // VIDEO hook
         }
         .onAppear(perform: initialTrack)
+        #if DEBUG
+        .task {
+            if CueCallerPreviewHost.mode == "calls" {
+                CueCallerPreviewHost.seedSampleAreas()
+                try? await Task.sleep(for: .seconds(1)); showCalls = true
+            }
+        }
+        #endif
         #if DEBUG
         .task {
             // -flashTest: fire the flash 2 s after opening (QA only).
@@ -181,6 +195,10 @@ struct CuePointsView: View {
             CuePointTypesSheet(store: store, counts: typeCounts, onRenumber: renumber)
         }
         .sheet(isPresented: $showPresets) { CueLabelPresetsSheet(store: labels) }
+        .sheet(isPresented: $showCalls, onDismiss: save) {
+            CueCallsReviewSheet(trackTitle: track?.title ?? "", points: points, index: index, clock: clock, onChange: { try? context.save() })
+        }
+        .sheet(isPresented: $showCallerSettings) { CueCallerSettingsSheet() }
         .alert("Start timecode", isPresented: $editingStart) {
             TextField("01:00:00:00", text: $startText)
                 .keyboardType(.numbersAndPunctuation)
@@ -398,6 +416,21 @@ struct CuePointsView: View {
                 .submitLabel(.done)
                 .onSubmit { field = nil; save() }
             CueLabelPresetBar(labels: labels.labels, onPick: { applyLabel($0, to: [p]) }, onEdit: { showPresets = true })
+            labelled("Call") {
+                HStack(spacing: 8) {
+                    Image(systemName: p.callNote.isEmpty ? "speaker" : "speaker.wave.1")
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundStyle(Theme.textTertiary)
+                        .frame(width: 16)
+                    TextField("What to say over comms", text: Binding(get: { p.callNote }, set: { p.callNote = $0; scheduleSave() }))
+                        .font(Theme.label).foregroundStyle(Theme.textPrimary)
+                        .focused($field, equals: .call)
+                        .submitLabel(.next)
+                        .onSubmit { nextCallNote(after: p) }
+                }
+                .fieldBox()
+            }
+            .accessibilityHint("Return saves and moves to the next mark")
             HStack(alignment: .top, spacing: 10) {
                 labelled("Cue number") {
                     TextField(String(idx.position(of: p)), text: Binding(get: { p.cueID }, set: { p.cueID = $0; scheduleSave() }))
@@ -724,8 +757,14 @@ struct CuePointsView: View {
                     .focused($field, equals: .row(p.id))
                     .submitLabel(.done)
                     .onSubmit { save() }
-                Text(fade.isEmpty ? type.name : "\(type.name) · Fade \(fade)")
-                    .font(Theme.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(fade.isEmpty ? type.name : "\(type.name) · Fade \(fade)")
+                    if !p.callNote.isEmpty {
+                        Image(systemName: "speaker.wave.1").font(.system(size: 9))
+                        Text(p.callNote).lineLimit(1)
+                    }
+                }
+                .font(Theme.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
             }
 
             Button { jump(to: p) } label: {
@@ -905,10 +944,21 @@ struct CuePointsView: View {
             }
             try? context.save()
             points = CuePoint.points(for: track.id, in: context)
+            if ProcessInfo.processInfo.arguments.contains("-cueCallerPreview") {
+                let notes = ["Intro hit": "Camera 3, push in slow", "Verse 1": "Camera 1, tight on vocal",
+                             "Pre-chorus": "Jib, sweep stage left", "Chorus drop": "Wide on the band, all cameras",
+                             "Screens on": "Camera 4, hold the screens", "Bridge": "Camera 2, slow pull out"]
+                for p in points { if let n = notes[p.name] { p.callNote = n } }
+                if let drop = points.first(where: { $0.name == "Chorus drop" }) {
+                    CueCallerUIModel.shared.setOverride("Abierto a la banda, todas las cámaras", markID: drop.id, language: "es-MX")
+                }
+                try? context.save()
+            }
             if ProcessInfo.processInfo.arguments.contains("-seedMulti") {
                 selection = Set(points.filter { $0.time >= 44 && $0.time <= 52 }.prefix(3).map(\.id)); selected = selection.first
             } else {
-                select(points.first(where: { $0.name == "Build" })?.id)
+                let pick = ProcessInfo.processInfo.arguments.contains("-cueCallerPreview") ? "Chorus drop" : "Build"
+                select(points.first(where: { $0.name == pick })?.id)
             }
             span = 120
         }
@@ -1070,6 +1120,16 @@ struct CuePointsView: View {
         }
         scheduleSave()
         rebuildIndexDependents()
+    }
+
+    /// Return in the Call field: save, select the next mark, keep typing its call.
+    private func nextCallNote(after p: CuePoint) {
+        save()
+        guard let i = points.firstIndex(where: { $0.id == p.id }), i + 1 < points.count else { field = nil; return }
+        let n = points[i + 1]
+        select(n.id)
+        if loaded { engine.seek(to: n.time) }
+        Task { @MainActor in field = .call }
     }
 
     private func startPass() {

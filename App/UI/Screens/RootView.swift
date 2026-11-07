@@ -52,6 +52,9 @@ struct RootView: View {
             if let err { shell.banner = ShellBanner(kind: .error, text: err) }
         }
         .task { bootstrap() }
+        #if DEBUG
+        .modifier(CueCallerPreviewHost()) // -cueCallerPreview: cue caller settings for screenshots
+        #endif
     }
 
     @ViewBuilder private var rootContent: some View {
