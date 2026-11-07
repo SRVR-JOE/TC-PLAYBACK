@@ -269,6 +269,14 @@ final class PlaybackEngine {
         updateNowPlaying()
     }
 
+    /// Park a freshly loaded source as paused (loaded, not running) so `play()` resumes from it —
+    /// used when relocating the generator while paused.
+    func holdPaused() {
+        guard source != .none, transport == .stopped else { return }
+        transport = .paused
+        updateNowPlaying()
+    }
+
     func pause() {
         guard transport == .playing else { return }
         graph?.core.setRun(false)

@@ -377,7 +377,7 @@ struct CueStrip: View {
 }
 
 /// Lock state, rate, source and level, in operator words. Shared by Show mode and the full-screen clock.
-struct ClockStatusLine: View {
+struct ShellClockStatusLine: View {
     var showsLockState = false
     @Bindable private var shell = ShellModel.shared
     @AppStorage(SettingsKey.showLock) private var showLock = false
@@ -529,7 +529,7 @@ struct ShowModeView: View {
             VStack(spacing: 0) {
                 Spacer(minLength: 8)
                 if !(phone && vSize == .compact) {
-                    ClockStatusLine(showsLockState: true).padding(.bottom, 8)
+                    ShellClockStatusLine(showsLockState: true).padding(.bottom, 8)
                 }
                 TimecodeClockView(compact: true)
                     .frame(maxWidth: .infinity)

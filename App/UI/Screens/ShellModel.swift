@@ -131,8 +131,7 @@ final class ShellModel {
     func stop(locked: Bool) {
         Haptics.stop()
         if locked {
-            // TODO(merge): use engine.stop(fadeOut: panicFade) if the Engine agent adds it.
-            show.stop()
+            PlaybackEngine.shared.stop(fadeOut: 1.0)
         } else {
             show.stop()
         }
@@ -251,8 +250,7 @@ final class ShellModel {
     }
 
     func handleOpenURL(_ url: URL, context: ModelContext) {
-        // TODO(merge): prefer TrackImporter.handleOpenURL(url, context:) if the Library agent adds it.
-        importAudio([url], context: context)
+        TrackImporter.handleOpenURL(url, context: context)
     }
 
     private func autoDismissBanner() {

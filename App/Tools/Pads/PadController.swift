@@ -184,7 +184,7 @@ final class PadController {
             anchorTC = config.start
             anchorDate = Date()
             pausedTC = play ? nil : config.start
-            if play { engine.play() } else { engine.pause() }
+            if play { engine.play() } else { engine.holdPaused() }
         } catch {
             errorMessage = "Couldn't start timecode: \(error.localizedDescription)"
             activePadID = nil

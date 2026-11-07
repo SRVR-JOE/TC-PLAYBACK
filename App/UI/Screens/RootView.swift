@@ -44,6 +44,7 @@ struct RootView: View {
         .onOpenURL { shell.handleOpenURL($0, context: context) }
         .onChange(of: shell.engine.transport) { _, _ in updateIdleTimer() }
         .onChange(of: keepAwake) { _, _ in updateIdleTimer() }
+        .onChange(of: showLock) { _, v in shell.engine.remoteTransportLocked = v }
         .onChange(of: shell.engine.lastError) { _, err in
             if let err { shell.banner = ShellBanner(kind: .error, text: err) }
         }
@@ -73,10 +74,13 @@ struct RootView: View {
         #if DEBUG
         if UIDemo.isOn { UIDemo.seed(context: context); return }
         #endif
-        // TODO(merge): DemoContent.seedIfNeeded(context: context)   — provided by the Library agent.
-        // TODO(merge): ShowController.shared.restore(context: context) — provided by the Library agent;
-        //              keep the fallback below for when nothing was restored.
+        DemoContent.seedIfNeeded(context: context)
+        ShowController.shared.restore(context: context)
+        if let p = ShowController.shared.playlist { shell.open(p) }
         if shell.playlist == nil { openLastPlaylist() }
+        shell.engine.onRemoteNext = { ShowController.shared.next() }
+        shell.engine.onRemotePrevious = { ShowController.shared.previous() }
+        shell.engine.remoteTransportLocked = showLock
     }
 
     private func openLastPlaylist() {

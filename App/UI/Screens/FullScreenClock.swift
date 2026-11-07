@@ -43,7 +43,7 @@ struct FullScreenClock: View {
 
     private var statusLine: some View {
         HStack(spacing: 18) {
-            ClockStatusLine(showsLockState: true)
+            ShellClockStatusLine(showsLockState: true)
             Spacer()
             Group {
                 if let cue = shell.activeCue {

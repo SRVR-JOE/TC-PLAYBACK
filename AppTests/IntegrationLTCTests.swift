@@ -15,6 +15,7 @@ final class IntegrationLTCTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: url) }
         let settings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: rate, AVNumberOfChannelsKey: 2,
                                        AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true, AVLinearPCMIsNonInterleaved: false]
+        do {
         let file = try AVAudioFile(forWriting: url, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
         let n = Int(rate * 4)
         let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(n))!
@@ -23,13 +24,14 @@ final class IntegrationLTCTests: XCTestCase {
         enc.render(into: UnsafeMutableBufferPointer(start: buf.floatChannelData![1], count: n))
         for i in 0..<n { buf.floatChannelData![0][i] = 0.3 * sinf(Float(i) * 2 * .pi * 440 / Float(rate)) }
         try file.write(from: buf)
+        } // file closes (header finalised) here
 
         let test = EngineOfflineRenderTests()
         var rig = try EngineOfflineRenderTests.Rig()
-        _ = try test.startFile(url, routing: ChannelRouting(leftEnabled: true, rightEnabled: false), rig: rig, thread: true)
+        let streamer = try test.startFile(url, routing: ChannelRouting(leftEnabled: true, rightEnabled: false), rig: rig, thread: true)
         let monitor = TimecodeMonitor(analysisRing: rig.core.analysisRing, sampleRate: rate)
         monitor.start()
-        defer { monitor.stop() }
+        defer { monitor.stop(); withExtendedLifetime(streamer) {} }
         // Render 3 s in real-ish chunks so the monitor thread keeps up with the 1 s ring.
         for _ in 0..<30 { try rig.render(Int(rate / 10), keep: true); usleep(20_000) }
         usleep(200_000)

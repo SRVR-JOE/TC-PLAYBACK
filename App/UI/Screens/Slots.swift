@@ -4,11 +4,11 @@ import SwiftUI
 // body with `TCPadsView()` / `OutputTestView()`. Keep each body a single line.
 
 struct PadsSlot: View {
-    var body: some View { Text("Pads") }
+    var body: some View { TCPadsView() }
 }
 
 struct OutputTestSlot: View {
-    var body: some View { Text("Output test") }
+    var body: some View { OutputTestView() }
 }
 
 /// Hosts a slot as a sheet destination with a title and Done.
