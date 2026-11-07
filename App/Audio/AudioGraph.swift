@@ -42,6 +42,10 @@ final class AudioGraph {
         engine.attach(sourceNode)
         engine.connect(sourceNode, to: engine.mainMixerNode, format: fmt)
         engine.mainMixerNode.outputVolume = 1
+        #if DEBUG
+        // QA: -silentOutput runs the whole engine with the speaker muted at the mixer.
+        if ProcessInfo.processInfo.arguments.contains("-silentOutput") { engine.mainMixerNode.outputVolume = 0 }
+        #endif
         engine.prepare()
     }
 

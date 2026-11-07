@@ -139,6 +139,29 @@ struct CuePointsView: View {
             if ProcessInfo.processInfo.arguments.contains("-flashTest") {
                 try? await Task.sleep(for: .seconds(2)); CueFlash.fire(markHex: CuePointColor.red.rawValue)
             }
+            // -liveMarkTest (with -silentOutput): play, drop 8 marks 0.25 s apart through the same
+            // path as a tap, and write a report. Verifies marking never stops playback.
+            if ProcessInfo.processInfo.arguments.contains("-liveMarkTest") {
+                for _ in 0..<100 where !loaded { try? await Task.sleep(for: .milliseconds(100)) }
+                guard loaded else { return }
+                engine.seek(to: 30); engine.play()
+                try? await Task.sleep(for: .seconds(1))
+                var lines: [String] = ["loaded=\(loaded) nameOnDrop=\(nameOnDrop) tapDelayMs=\(tapDelayMs) speakerDelay=\(allowSpeakerDelay) latency=\(String(format: "%.4f", CueMarkTiming.sessionOutputLatency))"]
+                let before = points.count
+                for i in 0..<8 {
+                    let ph = engine.currentTime
+                    mark(type: activeType)
+                    let t = points.first(where: { $0.id == lastMarkID })?.time ?? -1
+                    lines.append(String(format: "tap %d playhead %.3f mark %.3f diff %+.3f playing %@", i + 1, ph, t, t - ph,
+                                        engine.transport == .playing ? "yes" : "NO"))
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+                lines.append("marks added \(points.count - before), still playing: \(engine.transport == .playing ? "yes" : "NO"), playhead \(String(format: "%.3f", engine.currentTime))")
+                engine.stop()
+                let report = lines.joined(separator: "\n")
+                print("LIVEMARKTEST\n" + report)
+                try? report.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("liveMarkTest.txt"), atomically: true, encoding: .utf8)
+            }
         }
         #endif
         .onDisappear {
