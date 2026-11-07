@@ -34,9 +34,11 @@ enum TimelinePeaks {
     }
 }
 
-/// Zoomable timeline: TC ruler, waveform, draggable marks and the playhead.
-/// Drag a mark to move it (snaps to frames), drag elsewhere to scroll, pinch to zoom,
-/// tap a mark to select it, tap empty space to put the playhead there.
+/// Zoomable timeline: TC ruler, one lane per visible cue type, waveform (A1) and the playhead.
+/// Drag a mark to move it (snaps to frames; selected marks move together), drag elsewhere to
+/// scroll, pinch to zoom, tap a mark to select it, tap empty space to put the playhead there.
+/// Shift-tap or long-press adds to the selection; with Select on (or Shift held) dragging empty
+/// lane space draws a selection box. Marks in locked lanes can be selected but not dragged.
 struct TimelineEditor: View {
     var duration: TimeInterval
     var peaks: [Float]
@@ -51,35 +53,104 @@ struct TimelineEditor: View {
     /// Visible span in seconds (zoom), owned by the parent so a zoom slider can drive it.
     @Binding var span: TimeInterval
     var beatGrid: BeatGrid? = nil // BEATGRID hook: bars/beats strip, bar lines, snap
+    /// Lanes top to bottom (visible cue types). nil = a single "Marks" lane holding every point.
+    var lanes: [CuePointType]? = nil
+    /// Resolved numbers/colours; built from `points` + `lanes` when not given.
+    var index: CuePointIndex? = nil
+    /// Multi-selection (always contains `selected` when that is set).
+    var selection: Binding<Set<UUID>> = .constant([])
+    /// Select mode: taps add to the selection and dragging empty lane space draws a box.
+    var selectMode = false
+    /// Double-tap a mark to rename it in place; nil turns that off.
+    var onRename: ((CuePoint, String) -> Void)? = nil
+
     @State private var spanAtPinch: TimeInterval?
     /// Left edge of the view in seconds.
     @State private var origin: TimeInterval = 0
     @State private var drag: DragState?
+    @State private var gestureInfo: GestureInfo?
+    @State private var marquee: CGRect?
+    @State private var lastTap: (id: UUID, at: Date)?
+    @State private var renaming: UUID?
+    @State private var renameText = ""
+    @FocusState private var renameFocus: Bool
 
-    private enum DragState { case mark(CuePoint, TimeInterval), pan(TimeInterval), undecided }
-    private let rulerH: CGFloat = 22, flagH: CGFloat = 24
-    private let gutter: CGFloat = 52
+    private enum DragState {
+        case marks(hit: CuePoint, group: [(CuePoint, TimeInterval)])
+        case pan(TimeInterval)
+        case marquee(base: Set<UUID>)
+    }
+    private struct GestureInfo { var start: Date; var additive: Bool; var before: Set<UUID>; var wasSelected: Bool }
+    private let rulerH: CGFloat = 22
+    private let gutter: CGFloat = 78
+
+    /// Vertical layout shared by the gutter and the canvas.
+    private struct Layout {
+        var laneH: CGFloat, lanesTop: CGFloat, count: Int
+        var waveTop: CGFloat { lanesTop + laneH * CGFloat(count) }
+        func laneY(_ i: Int) -> CGFloat { lanesTop + laneH * CGFloat(i) }
+        func lane(atY y: CGFloat) -> Int? {
+            guard laneH > 0, y >= lanesTop, y < waveTop else { return nil }
+            return Int((y - lanesTop) / laneH)
+        }
+    }
+
+    private var laneTypes: [CuePointType] { lanes ?? [CuePointType(id: CuePointType.defaultID, name: "Marks", colorHex: CuePointColor.amber.rawValue)] }
+    private var idx: CuePointIndex { index ?? CuePointIndex(points: points, types: lanes ?? CuePointType.defaults) }
+
+    private func layout(height: CGFloat) -> Layout {
+        let n = laneTypes.count
+        guard n > 0 else { return Layout(laneH: 0, lanesTop: rulerH, count: 0) }
+        // Lanes share what's left after a usable waveform, 16…26 pt each.
+        let h = min(26, max(16, (height - rulerH - 44) / CGFloat(n)))
+        return Layout(laneH: h, lanesTop: rulerH, count: n)
+    }
+
+    /// Lane of a point, or nil when its type's lane is hidden.
+    private func lane(of p: CuePoint) -> Int? {
+        if lanes == nil { return 0 }
+        let id = idx.type(of: p).id
+        return laneTypes.firstIndex(where: { $0.id == id })
+    }
+    private func isLocked(_ p: CuePoint) -> Bool { lane(of: p).map { laneTypes[$0].locked } ?? true }
 
     var body: some View {
-        HStack(spacing: 0) {
-            laneHeaders
-            Rectangle().fill(Theme.hairline).frame(width: 1)
-            canvas
+        GeometryReader { geo in
+            let L = layout(height: geo.size.height)
+            HStack(spacing: 0) {
+                laneHeaders(L)
+                Rectangle().fill(Theme.hairline).frame(width: 1)
+                canvas(L)
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: Theme.corner))
         .overlay(RoundedRectangle(cornerRadius: Theme.corner).strokeBorder(Theme.hairline, lineWidth: 1))
         .onChange(of: span) { _, _ in origin = clampOrigin(origin) }
     }
 
-    /// Track headers, editor style: marker lane and the audio lane.
-    private var laneHeaders: some View {
+    /// Track headers, editor style: one per cue lane (colour chip + name) and the audio lane.
+    private func laneHeaders(_ L: Layout) -> some View {
         VStack(spacing: 0) {
-            Text(clock.rate.operatorLabel).font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundStyle(Theme.textTertiary).frame(height: rulerH)
+            Text("\(clock.rate.operatorLabel) fps").font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Theme.textTertiary).frame(height: rulerH - 1)
             Rectangle().fill(Theme.hairline).frame(height: 1)
-            Text("Marks").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-                .frame(height: flagH)
-            Rectangle().fill(Theme.hairline).frame(height: 1)
+            ForEach(laneTypes) { t in
+                HStack(spacing: 6) {
+                    RoundedRectangle(cornerRadius: 1.5).fill(Color(hexString: t.colorHex) ?? Theme.standby)
+                        .frame(width: 4, height: max(8, L.laneH - 8))
+                    Text(t.name).font(.system(size: L.laneH < 20 ? 10 : 11, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary).lineLimit(1).minimumScaleFactor(0.7)
+                    Spacer(minLength: 0)
+                    if t.locked {
+                        Image(systemName: "lock.fill").font(.system(size: 8)).foregroundStyle(Theme.textTertiary)
+                            .accessibilityLabel("Locked")
+                    }
+                }
+                .padding(.horizontal, 6)
+                .frame(height: L.laneH)
+                .accessibilityElement(children: .combine)
+            }
+            Rectangle().fill(Theme.hairline).frame(height: L.count > 0 ? 1 : 0)
             Text("A1").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                 .frame(maxHeight: .infinity)
         }
@@ -87,14 +158,14 @@ struct TimelineEditor: View {
         .background(Theme.surface)
     }
 
-    private var canvas: some View {
+    private func canvas(_ L: Layout) -> some View {
         GeometryReader { geo in
             let w = max(1, geo.size.width)
             let pps = w / span
-            Canvas { gc, size in draw(gc, size, pps: pps) }
+            Canvas { gc, size in draw(gc, size, pps: pps, L) }
                 .background(Theme.surfaceSunken)
                 .contentShape(Rectangle())
-                .gesture(dragGesture(width: w, pps: pps))
+                .gesture(dragGesture(width: w, pps: pps, L))
                 .simultaneousGesture(
                     MagnifyGesture()
                         .onChanged { v in
@@ -106,6 +177,7 @@ struct TimelineEditor: View {
                         }
                         .onEnded { _ in spanAtPinch = nil }
                 )
+                .overlay(alignment: .topLeading) { renameField(pps: pps, width: w, L) }
                 .onChange(of: playhead) { _, t in follow(t) }
                 .onAppear { follow(playhead) }
         }
@@ -134,47 +206,140 @@ struct TimelineEditor: View {
         return min(max(0, (t * f).rounded() / f), duration)
     }
 
-    private func hitMark(atX px: CGFloat, pps: CGFloat) -> CuePoint? {
-        points.min(by: { abs(x(of: $0.time, pps: pps) - px) < abs(x(of: $1.time, pps: pps) - px) })
-            .flatMap { abs(x(of: $0.time, pps: pps) - px) <= 14 ? $0 : nil }
+    /// Mark under a point: within its lane by 14 pt; over the ruler/waveform, any visible mark's line by 8 pt.
+    private func hitMark(at loc: CGPoint, pps: CGFloat, _ L: Layout) -> CuePoint? {
+        let laneHit = L.lane(atY: loc.y)
+        let candidates = points.filter { p in
+            guard let l = lane(of: p) else { return false }
+            return laneHit == nil || l == laneHit
+        }
+        let reach: CGFloat = laneHit == nil ? 8 : 14
+        return candidates.min(by: { abs(x(of: $0.time, pps: pps) - loc.x) < abs(x(of: $1.time, pps: pps) - loc.x) })
+            .flatMap { abs(x(of: $0.time, pps: pps) - loc.x) <= reach ? $0 : nil }
     }
 
-    private func dragGesture(width: CGFloat, pps: CGFloat) -> some Gesture {
+    private func setSelection(_ s: Set<UUID>, primary: UUID?) {
+        selection.wrappedValue = s
+        selected = primary.flatMap { s.contains($0) ? $0 : nil } ?? points.first(where: { s.contains($0.id) })?.id
+    }
+
+    private func dragGesture(width: CGFloat, pps: CGFloat, _ L: Layout) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { v in
-                if drag == nil {
-                    if let m = hitMark(atX: v.startLocation.x, pps: pps) {
-                        drag = .mark(m, m.time); selected = m.id
-                    } else {
-                        drag = .pan(origin)
-                    }
-                }
+                if drag == nil { begin(v, pps: pps, L) }
                 switch drag {
-                case .mark(let m, let t0):
-                    guard abs(v.translation.width) > 3 else { return }
-                    onMove(m, snap(t0 + Double(v.translation.width / pps)))
+                case .marks(_, let group):
+                    guard abs(v.translation.width) > 3, !group.isEmpty else { return }
+                    let fps = clock.rate.fps
+                    let raw = (Double(v.translation.width / pps) * fps).rounded() / fps
+                    let d = CuePointSelectionMath.clampedDelta(times: group.map(\.1), by: raw, duration: duration)
+                    for (p, t0) in group { onMove(p, snap(t0 + d)) }
                 case .pan(let o0):
                     guard abs(v.translation.width) > 3 else { return }
                     origin = clampOrigin(o0 - Double(v.translation.width / pps))
-                default: break
+                case .marquee(let base):
+                    let r = CGRect(x: min(v.startLocation.x, v.location.x), y: min(v.startLocation.y, v.location.y),
+                                   width: abs(v.translation.width), height: abs(v.translation.height))
+                    marquee = r
+                    let t0 = time(atX: r.minX, pps: pps), t1 = time(atX: r.maxX, pps: pps)
+                    let hits = points.filter { p in
+                        guard let l = lane(of: p), p.time >= t0, p.time <= t1 else { return false }
+                        let y0 = L.laneY(l)
+                        return r.maxY >= y0 && r.minY <= y0 + L.laneH
+                    }.map(\.id)
+                    setSelection(base.union(hits), primary: selected)
+                case nil: break
                 }
             }
             .onEnded { v in
                 let tap = abs(v.translation.width) <= 3 && abs(v.translation.height) <= 3
-                if tap {
-                    if case .mark = drag {} else {
-                        selected = nil
+                let info = gestureInfo
+                let long = tap && info.map { v.time.timeIntervalSince($0.start) >= 0.45 } ?? false
+                if tap, let info {
+                    switch drag {
+                    case .marks(let m, _):
+                        if long && !info.additive {
+                            // Long-press: add to (or take out of) the selection made before.
+                            setSelection(info.wasSelected ? info.before.subtracting([m.id]) : info.before.union([m.id]), primary: m.id)
+                            Haptics.tick()
+                        } else if info.additive && info.wasSelected {
+                            setSelection(selection.wrappedValue.subtracting([m.id]), primary: nil)
+                        } else if !info.additive {
+                            setSelection([m.id], primary: m.id)
+                            if let last = lastTap, last.id == m.id, v.time.timeIntervalSince(last.at) < 0.4, onRename != nil {
+                                beginRename(m); lastTap = nil
+                            } else {
+                                lastTap = (m.id, v.time)
+                            }
+                        }
+                    default:
+                        if !info.additive { setSelection([], primary: nil) }
                         onSeek(min(max(0, time(atX: v.location.x, pps: pps)), duration))
                     }
                 }
-                drag = nil
+                drag = nil; gestureInfo = nil; marquee = nil
             }
+    }
+
+    // MARK: Rename in place
+
+    private func beginRename(_ p: CuePoint) {
+        renaming = p.id; renameText = p.name; renameFocus = true
+    }
+
+    private func endRename(save: Bool) {
+        if save, let id = renaming, let p = points.first(where: { $0.id == id }) {
+            let t = renameText.trimmingCharacters(in: .whitespaces)
+            if !t.isEmpty, t != p.name { onRename?(p, t) }
+        }
+        renaming = nil; renameFocus = false
+    }
+
+    @ViewBuilder private func renameField(pps: CGFloat, width: CGFloat, _ L: Layout) -> some View {
+        if let id = renaming, let p = points.first(where: { $0.id == id }), let lane = lane(of: p) {
+            let fieldW: CGFloat = 200
+            let px = min(max(0, x(of: p.time, pps: pps)), max(0, width - fieldW))
+            TextField("Name", text: $renameText)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .focused($renameFocus)
+                .submitLabel(.done)
+                .onSubmit { endRename(save: true) }
+                .onKeyPress(.escape) { endRename(save: false); return .handled }
+                .padding(.horizontal, 6)
+                .frame(width: fieldW, height: max(26, L.laneH + 4))
+                .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 3))
+                .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Theme.textSecondary, lineWidth: 1))
+                .offset(x: px, y: L.laneY(lane) - 2)
+                .onChange(of: renameFocus) { _, on in if !on { endRename(save: true) } }
+        }
+    }
+
+    private func begin(_ v: DragGesture.Value, pps: CGFloat, _ L: Layout) {
+        let shift = HardwareKeys.shift
+        let additive = selectMode || shift
+        let before = selection.wrappedValue
+        if let m = hitMark(at: v.startLocation, pps: pps, L) {
+            let was = before.contains(m.id)
+            gestureInfo = GestureInfo(start: v.time, additive: additive, before: before, wasSelected: was)
+            if !was { setSelection(additive ? before.union([m.id]) : [m.id], primary: m.id) } else { selected = m.id }
+            let ids = selection.wrappedValue
+            let group = points.filter { ids.contains($0.id) && !isLocked($0) }.map { ($0, $0.time) }
+            drag = .marks(hit: m, group: isLocked(m) ? [] : group)
+        } else {
+            gestureInfo = GestureInfo(start: v.time, additive: additive, before: before, wasSelected: false)
+            if additive, L.count > 0, v.startLocation.y >= L.lanesTop {
+                drag = .marquee(base: shift ? before : [])
+            } else {
+                drag = .pan(origin)
+            }
+        }
     }
 
     // MARK: Drawing
 
-    private func draw(_ gc: GraphicsContext, _ size: CGSize, pps: CGFloat) {
-        let waveTop = rulerH + flagH, waveH = size.height - waveTop
+    private func draw(_ gc: GraphicsContext, _ size: CGSize, pps: CGFloat, _ L: Layout) {
+        let waveTop = L.waveTop, waveH = size.height - waveTop
         // Ruler
         gc.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: rulerH)), with: .color(Theme.surface))
         let step = rulerStep(pps: pps)
@@ -190,11 +355,10 @@ struct TimelineEditor: View {
             t += step
         }
         gc.fill(Path(CGRect(x: 0, y: rulerH - 0.5, width: size.width, height: 0.5)), with: .color(Theme.hairline))
-        gc.fill(Path(CGRect(x: 0, y: rulerH, width: size.width, height: flagH)), with: .color(Theme.surface.opacity(0.6)))
-        gc.fill(Path(CGRect(x: 0, y: rulerH + flagH, width: size.width, height: 0.5)), with: .color(Theme.hairline))
+        drawLanes(gc, size, L)
 
         // Waveform (mirrored peaks)
-        if !peaks.isEmpty {
+        if !peaks.isEmpty, waveH > 4 {
             let mid = waveTop + waveH / 2
             var path = Path()
             let bps = TimelinePeaks.bucketsPerSecond
@@ -226,24 +390,11 @@ struct TimelineEditor: View {
                                lines: rulerH...(size.height - h), origin: origin, pps: pps, duration: duration)
         }
 
-        // Marks
-        for (i, p) in points.enumerated() {
-            let px = x(of: p.time, pps: pps)
-            guard px > -120, px < size.width + 4 else { continue }
-            let color = Color(hexString: p.colorHex ?? "") ?? Theme.standby
-            let sel = p.id == selected
-            gc.fill(Path(CGRect(x: px - (sel ? 1 : 0.5), y: rulerH, width: sel ? 2 : 1, height: size.height - rulerH)),
-                    with: .color(color.opacity(sel ? 1 : 0.85)))
-            let text = Text("\(i + 1) \(p.name)").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.background)
-            let resolved = gc.resolve(text)
-            let tw = min(resolved.measure(in: CGSize(width: 200, height: flagH)).width + 8, 208)
-            let flag = CGRect(x: px, y: rulerH + 1, width: tw, height: flagH - 2)
-            gc.fill(Path(roundedRect: flag, cornerRadius: 2), with: .color(color))
-            if sel { gc.stroke(Path(roundedRect: flag.insetBy(dx: -1, dy: -1), cornerRadius: 3), with: .color(Theme.textPrimary), lineWidth: 1) }
-            gc.drawLayer { l in
-                l.clip(to: Path(flag))
-                l.draw(resolved, at: CGPoint(x: px + 4, y: rulerH + flagH / 2), anchor: .leading)
-            }
+        drawMarks(gc, size, pps: pps, L)
+
+        if let r = marquee {
+            gc.fill(Path(r), with: .color(Theme.textPrimary.opacity(0.06)))
+            gc.stroke(Path(r), with: .color(Theme.textSecondary), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
         }
 
         // Playhead
@@ -252,6 +403,42 @@ struct TimelineEditor: View {
         var tri = Path()
         tri.move(to: CGPoint(x: ph - 5, y: 0)); tri.addLine(to: CGPoint(x: ph + 5, y: 0)); tri.addLine(to: CGPoint(x: ph, y: 6))
         gc.fill(tri, with: .color(Theme.textPrimary))
+    }
+
+    /// Lane stripes (alternating shade) with hairlines between them.
+    private func drawLanes(_ gc: GraphicsContext, _ size: CGSize, _ L: Layout) {
+        for i in 0..<L.count {
+            let y = L.laneY(i)
+            gc.fill(Path(CGRect(x: 0, y: y, width: size.width, height: L.laneH)),
+                    with: .color(Theme.surface.opacity(i.isMultiple(of: 2) ? 0.6 : 0.35)))
+            gc.fill(Path(CGRect(x: 0, y: y + L.laneH - 0.5, width: size.width, height: 0.5)), with: .color(Theme.hairline))
+        }
+    }
+
+    /// Each mark: a line from its lane down through the waveform, and a flag in its lane.
+    private func drawMarks(_ gc: GraphicsContext, _ size: CGSize, pps: CGFloat, _ L: Layout) {
+        let sel = selection.wrappedValue
+        let fontSize: CGFloat = L.laneH < 20 ? 10 : 11
+        for p in points {
+            guard let lane = lane(of: p) else { continue }
+            let px = x(of: p.time, pps: pps)
+            guard px > -220, px < size.width + 4 else { continue }
+            let color = Color(hexString: idx.colorHex(of: p)) ?? Theme.standby
+            let on = sel.contains(p.id) || p.id == selected
+            let top = L.laneY(lane)
+            gc.fill(Path(CGRect(x: px - (on ? 1 : 0.5), y: top, width: on ? 2 : 1, height: size.height - top)),
+                    with: .color(color.opacity(on ? 1 : 0.85)))
+            let text = Text("\(idx.number(of: p)) \(p.name)").font(.system(size: fontSize, weight: .semibold)).foregroundStyle(Theme.background)
+            let resolved = gc.resolve(text)
+            let tw = min(resolved.measure(in: CGSize(width: 200, height: L.laneH)).width + 8, 208)
+            let flag = CGRect(x: px, y: top + 1, width: tw, height: L.laneH - 2)
+            gc.fill(Path(roundedRect: flag, cornerRadius: 2), with: .color(color))
+            if on { gc.stroke(Path(roundedRect: flag.insetBy(dx: -1, dy: -1), cornerRadius: 3), with: .color(Theme.textPrimary), lineWidth: 1) }
+            gc.drawLayer { l in
+                l.clip(to: Path(flag))
+                l.draw(resolved, at: CGPoint(x: px + 4, y: top + L.laneH / 2), anchor: .leading)
+            }
+        }
     }
 
     private func rulerStep(pps: CGFloat) -> TimeInterval {
@@ -274,6 +461,8 @@ struct TriggerReadout: View {
     var isPlaying: Bool
     /// Fills its space with a big now/next display (editor monitor area).
     var large = false
+    /// Cue numbers and colours by type; nil = numbered by position, mark colour.
+    var index: CuePointIndex? = nil
 
     @State private var lastHit: (id: UUID, at: Date)?
     @State private var previous: TimeInterval = 0
@@ -284,10 +473,10 @@ struct TriggerReadout: View {
             let current = points.last(where: { $0.time <= playhead + 0.0005 })
             let next = points.first(where: { $0.time > playhead + 0.0005 })
             let flashing = lastHit.map { now.timeIntervalSince($0.at) < 0.6 } ?? false
-            let flashColor = current.flatMap { Color(hexString: $0.colorHex ?? "") } ?? Theme.standby
+            let flashColor = current.flatMap { Color(hexString: colorHex($0) ?? "") } ?? Theme.standby
             HStack(spacing: 14) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(current.map { "\(index($0)) \($0.name)" } ?? "Before first mark")
+                    Text(current.map { "\(cueLabel($0)) \($0.name)" } ?? "Before first mark")
                         .font(.system(size: large ? 46 : 22, weight: .semibold))
                         .foregroundStyle(flashing ? Theme.background : Theme.textPrimary)
                         .lineLimit(1).minimumScaleFactor(0.6)
@@ -298,7 +487,7 @@ struct TriggerReadout: View {
                 Spacer(minLength: 8)
                 if let next {
                     VStack(alignment: .trailing, spacing: 2) {
-                        Text("Next \(index(next)) \(next.name)")
+                        Text("Next \(cueLabel(next)) \(next.name)")
                             .font(large ? .system(size: 20, weight: .medium) : Theme.label)
                             .foregroundStyle(flashing ? Theme.background : Theme.textSecondary)
                             .lineLimit(1)
@@ -319,11 +508,15 @@ struct TriggerReadout: View {
             if let hit = points.last(where: { $0.time > old && $0.time <= new }) {
                 lastHit = (hit.id, Date())
                 Haptics.tick()
-                CueFlash.fire(markHex: hit.colorHex)
+                CueFlash.fire(markHex: colorHex(hit))
             }
         }
         .accessibilityElement(children: .combine)
     }
 
-    private func index(_ p: CuePoint) -> Int { (points.firstIndex(where: { $0.id == p.id }) ?? 0) + 1 }
+    private func cueLabel(_ p: CuePoint) -> String {
+        if let index { return index.number(of: p) }
+        return String((points.firstIndex(where: { $0.id == p.id }) ?? 0) + 1)
+    }
+    private func colorHex(_ p: CuePoint) -> String? { index?.colorHex(of: p) ?? p.colorHex }
 }
