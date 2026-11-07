@@ -38,6 +38,7 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "TC Playback listens to the audio input only when you choose to read external timecode."
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "TC Playback opens the videos you choose so you can line them up with a track and mark cues."
         INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 PIXEL HAUS"
         INFOPLIST_KEY_UIFileSharingEnabled: YES
         INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES

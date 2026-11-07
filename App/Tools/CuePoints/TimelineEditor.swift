@@ -64,6 +64,8 @@ struct TimelineEditor: View {
     /// Double-tap a mark to rename it in place; nil turns that off.
     var onRename: ((CuePoint, String) -> Void)? = nil
 
+    /// VIDEO hook: optional film-strip lane under the timeline, given the visible (origin, span).
+    var videoLane: ((TimeInterval, TimeInterval) -> AnyView)? = nil
     @State private var spanAtPinch: TimeInterval?
     /// Left edge of the view in seconds.
     @State private var origin: TimeInterval = 0
@@ -115,6 +117,7 @@ struct TimelineEditor: View {
     private func isLocked(_ p: CuePoint) -> Bool { lane(of: p).map { laneTypes[$0].locked } ?? true }
 
     var body: some View {
+        VStack(spacing: 0) { // VIDEO hook (wrapper)
         GeometryReader { geo in
             let L = layout(height: geo.size.height)
             HStack(spacing: 0) {
@@ -122,6 +125,8 @@ struct TimelineEditor: View {
                 Rectangle().fill(Theme.hairline).frame(width: 1)
                 canvas(L)
             }
+        }
+        if let videoLane { Rectangle().fill(Theme.hairline).frame(height: 1); videoLane(origin, span) } // VIDEO hook
         }
         .clipShape(RoundedRectangle(cornerRadius: Theme.corner))
         .overlay(RoundedRectangle(cornerRadius: Theme.corner).strokeBorder(Theme.hairline, lineWidth: 1))

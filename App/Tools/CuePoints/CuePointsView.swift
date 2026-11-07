@@ -56,9 +56,7 @@ struct CuePointsView: View {
     @FocusState private var passFocus: Bool
 
     // VIDEO hook: optional panel shown above the timeline in both layouts (video sync builder).
-    var videoPanel: AnyView?
 
-    init(videoPanel: AnyView? = nil) { self.videoPanel = videoPanel }
 
     private let store = CuePointTypeStore.shared
     private let labels = CueLabelPresetStore.shared
@@ -91,6 +89,7 @@ struct CuePointsView: View {
                         HStack(alignment: .top, spacing: Theme.pad) {
                             VStack(spacing: 10) {
                                 header(track)
+                                CueVideoPanel(track: track, clock: clock, layout: .wide) // VIDEO hook
                                 TriggerReadout(points: points, clock: clock, playhead: engine.currentTime,
                                                isPlaying: engine.transport == .playing, large: true, index: index)
                                 transport
@@ -102,7 +101,6 @@ struct CuePointsView: View {
                         .padding(Theme.pad)
                         .frame(height: geo.size.height * 0.52)
                         // VIDEO hook: slot above the timeline (wide layout).
-                        if let videoPanel { videoPanel.padding(.horizontal, Theme.pad) }
                         timelineBar(track)
                         timeline(track).frame(maxHeight: .infinity)
                             .padding([.horizontal, .bottom], Theme.pad)
@@ -111,8 +109,7 @@ struct CuePointsView: View {
                         TriggerReadout(points: points, clock: clock, playhead: engine.currentTime,
                                        isPlaying: engine.transport == .playing, index: index)
                             .padding(.horizontal, Theme.pad)
-                        // VIDEO hook: slot above the timeline (narrow layout).
-                        if let videoPanel { videoPanel.padding(.horizontal, Theme.pad) }
+                        CueVideoPanel(track: track, clock: clock, layout: .strip).padding([.horizontal, .top], Theme.pad) // VIDEO hook
                         timelineBar(track)
                         timeline(track).frame(height: 180).padding(.horizontal, Theme.pad)
                         transport
@@ -130,6 +127,7 @@ struct CuePointsView: View {
         .toolbar {
             ToolbarItem(placement: .principal) { trackMenu }
             ToolbarItem(placement: .topBarTrailing) { exportMenu(prominent: false) }
+            ToolbarItem(placement: .topBarTrailing) { if let track { CueVideoMenu(track: track) } } // VIDEO hook
         }
         .onAppear(perform: initialTrack)
         #if DEBUG
@@ -227,7 +225,8 @@ struct CuePointsView: View {
                        onMove: move, span: $span,
                        beatGrid: beatGrid, // BEATGRID hook
                        lanes: store.visible, index: index, selection: $selection, selectMode: selectMode,
-                       onRename: { p, name in p.name = name; save() })
+                       onRename: { p, name in p.name = name; save() },
+                       videoLane: CueVideoController.shared.timelineLane) // VIDEO hook
             .id(track.id)
             .overlay(alignment: .bottom) { namingOverlay.padding(8) }
             .overlay(alignment: .topTrailing) { undoButton.padding(.top, 26).padding(.trailing, 8) }

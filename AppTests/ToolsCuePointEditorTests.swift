@@ -240,13 +240,13 @@ final class ToolsCuePointEditorTests: XCTestCase {
     func testLabelPresetStore() {
         let s = CueLabelPresetStore(defaults: defaults)
         XCTAssertEqual(s.labels.first, "Intro")
-        XCTAssertEqual(s.labels.count, 15)
+        XCTAssertEqual(s.labels.count, CueLabelPresetStore.seed.count)
         s.add("Kabuki"); s.add("kabuki"); s.add("  ")
         XCTAssertEqual(s.labels.last, "Kabuki")
-        XCTAssertEqual(s.labels.count, 16)
-        s.move(fromOffsets: IndexSet(integer: 15), toOffset: 0)
+        XCTAssertEqual(s.labels.count, CueLabelPresetStore.seed.count + 1)
+        s.move(fromOffsets: IndexSet(integer: s.labels.count - 1), toOffset: 0)
         s.remove(atOffsets: IndexSet(integer: 1))
         let r = CueLabelPresetStore(defaults: defaults)
-        XCTAssertEqual(r.labels.prefix(2), ["Kabuki", "Verse"])
+        XCTAssertEqual(r.labels.prefix(2), ["Kabuki", "Pre-Verse"])
     }
 }
