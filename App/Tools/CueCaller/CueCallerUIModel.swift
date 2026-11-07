@@ -91,30 +91,40 @@ struct CueCallOutputChannel: Identifiable, Hashable, Sendable {
 @MainActor
 @Observable
 final class CueCallerUIModel {
-    static let shared = CueCallerUIModel()
+    static let shared = CueCallerUIModel(engine: .shared)
 
     @ObservationIgnored private let defaults: UserDefaults
+    /// The live caller. nil in unit tests, which keep settings in their own defaults.
+    @ObservationIgnored private let engine: CueCaller?
     static let noteLanguageKey = "cueCaller.noteLanguage"
     static let overridesKey = "cueCaller.ui.overrides"
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, engine: CueCaller? = nil) {
         self.defaults = defaults
-        settings = CueCallerSettings.load(defaults)
+        self.engine = engine
+        settings = engine?.settings ?? CueCallerSettings.load(defaults)
         noteLanguage = defaults.string(forKey: Self.noteLanguageKey) ?? "en-US"
         overrides = (defaults.dictionary(forKey: Self.overridesKey) as? [String: String]) ?? [:]
+        engine?.noteLanguage = noteLanguage
     }
 
     // MARK: Settings
 
     /// SEAM: expects `CueCaller.shared.settings` (get/set, persisted by the engine). Today: saved here.
     var settings: CueCallerSettings {
-        didSet { if settings != oldValue { settings.save(defaults) } }
+        didSet {
+            guard settings != oldValue else { return }
+            if let engine { engine.settings = settings } else { settings.save(defaults) }
+        }
     }
 
     /// The language the operator writes call notes in.
     /// SEAM: expects the language layer's source language if it keeps one; else keep this.
     var noteLanguage: String {
-        didSet { defaults.set(noteLanguage, forKey: Self.noteLanguageKey) }
+        didSet {
+            defaults.set(noteLanguage, forKey: Self.noteLanguageKey)
+            engine?.noteLanguage = noteLanguage
+        }
     }
 
     /// Master toggle.
@@ -128,6 +138,13 @@ final class CueCallerUIModel {
     /// SEAM: expects `CueCaller.shared.status` (off / following / waiting / lost).
     var status: CueCallerStatus {
         guard settings.enabled else { return .off }
+        if let engine {
+            switch engine.status {
+            case .following: return .following
+            case .timecodeLost: return .lost
+            case .idle, .waitingForTimecode: return .waiting
+            }
+        }
         let e = PlaybackEngine.shared
         switch settings.source {
         case .playback:
@@ -143,11 +160,20 @@ final class CueCallerUIModel {
     }
 
     /// SEAM: expects `CueCaller.shared.lastCall`.
-    var lastCall: CueCallerLastCall? { nil }
+    var lastCall: CueCallerLastCall? {
+        guard let c = engine?.lastCall else { return nil }
+        return CueCallerLastCall(text: c.text, areaName: area(c.areaID)?.name ?? "", kind: c.kind)
+    }
 
     /// SEAM: expects `CueCaller.shared.nextCall` (with live seconds to go). nil here: the playback
     /// strip falls back to its own next-mark-with-a-note readout.
-    var nextCall: CueCallerUpcoming? { nil }
+    var nextCall: CueCallerUpcoming? {
+        guard let engine, let c = engine.nextCall, let startsIn = engine.nextCallIn else { return nil }
+        // nextCallIn counts to the first word; show the countdown to the call's target instead.
+        let start = engine.timeline.first { $0.call == c }?.start ?? c.at
+        return CueCallerUpcoming(markID: c.markID, markName: "", text: c.text, kind: c.kind,
+                                 secondsToGo: max(0, startsIn + (c.at - start)))
+    }
 
     // MARK: Actions
 
@@ -156,6 +182,7 @@ final class CueCallerUIModel {
     /// the area's output channels, and the simulator must stay silent).
     func test(area: CueCallArea) {
         lastTestAreaID = area.id
+        engine?.test(area: area)
     }
     private(set) var lastTestAreaID: UUID?
 
@@ -164,6 +191,10 @@ final class CueCallerUIModel {
     /// SEAM: expects the language layer's voice list for a language (`SpeechCueCallRenderer`).
     /// Today: installed system voices for that language, best quality first.
     func voices(for language: String) -> [CueCallVoiceChoice] {
+        if engine != nil {
+            return SpeechCueCallRenderer.voices(for: language)
+                .map { CueCallVoiceChoice(id: $0.id, name: $0.name, quality: $0.qualityLabel) }
+        }
         let base = language.split(separator: "-").first.map(String.init) ?? language
         let all = AVSpeechSynthesisVoice.speechVoices()
             .filter { !$0.voiceTraits.contains(.isNoveltyVoice) && !$0.voiceTraits.contains(.isPersonalVoice) }
@@ -185,6 +216,14 @@ final class CueCallerUIModel {
     /// Today: Apple's Translation framework directly.
     func translationStatus(for language: String) async -> CueCallTranslationStatus {
         if Self.sameLanguage(language, noteLanguage) { return .sameLanguage }
+        if engine != nil {
+            switch await AppleCueCallTranslator.shared.status(from: noteLanguage, to: language) {
+            case .same: return .sameLanguage
+            case .installed: return .ready
+            case .needsDownload: return .downloadNeeded
+            case .unsupported: return .unsupported
+            }
+        }
         let status = await LanguageAvailability().status(from: Locale.Language(identifier: noteLanguage),
                                                          to: Locale.Language(identifier: language))
         switch status {
@@ -197,7 +236,12 @@ final class CueCallerUIModel {
     /// SEAM: expects the language layer's cached translation of `text` into `language` (nil when
     /// not translated yet). Today: nil unless the languages match.
     func translation(of text: String, to language: String) async -> String? {
-        Self.sameLanguage(language, noteLanguage) ? text : nil
+        if Self.sameLanguage(language, noteLanguage) { return text }
+        guard engine != nil else { return nil }
+        let t = AppleCueCallTranslator.shared
+        if let cached = CueCallTranslationStore.shared.cached(text, from: noteLanguage, to: language) { return cached }
+        guard case .installed = await t.status(from: noteLanguage, to: language) else { return nil }
+        return try? await t.translate(text, from: noteLanguage, to: language)
     }
 
     nonisolated static func sameLanguage(_ a: String, _ b: String) -> Bool {
@@ -213,12 +257,19 @@ final class CueCallerUIModel {
     private static func overrideKey(_ mark: UUID, _ language: String) -> String { "\(mark.uuidString)|\(language)" }
 
     func override(markID: UUID, language: String) -> String? {
-        overrides[Self.overrideKey(markID, language)]
+        if engine != nil { return CueCallTranslationStore.shared.override(markID: markID, language: language)?.text }
+        return overrides[Self.overrideKey(markID, language)]
     }
 
     /// nil or blank clears the override (back to the automatic translation).
-    func setOverride(_ text: String?, markID: UUID, language: String) {
+    /// `note` is the mark's call note the correction was written for (a later edit of the note
+    /// makes the correction stale, so a changed note is never called with an old translation).
+    func setOverride(_ text: String?, markID: UUID, language: String, note: String = "") {
         let t = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if engine != nil {
+            CueCallTranslationStore.shared.setOverride(markID: markID, language: language, sourceText: note, text: t)
+            return
+        }
         overrides[Self.overrideKey(markID, language)] = t.isEmpty ? nil : t
     }
 

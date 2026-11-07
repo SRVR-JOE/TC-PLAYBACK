@@ -8,6 +8,8 @@ struct TCPlaybackApp: App {
         #if DEBUG
         CueCallerSelfTest.runIfRequested() // -cueCallerTest -silentOutput
         #endif
+        // The self-test measures timing with its stand-in voice; everything else gets real speech.
+        if !ProcessInfo.processInfo.arguments.contains("-cueCallerTest") { CueCallerWiring.install() }
     }
 
     var body: some Scene {

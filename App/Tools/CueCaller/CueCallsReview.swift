@@ -56,11 +56,11 @@ struct CueCallsReviewSheet: View {
                    isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
                 TextField("Call", text: $editText)
                 Button("Save") {
-                    if let e = editing { model.setOverride(editText, markID: e.markID, language: e.language); revision += 1 }
+                    if let e = editing { model.setOverride(editText, markID: e.markID, language: e.language, note: e.note); revision += 1 }
                 }
                 if let e = editing, model.override(markID: e.markID, language: e.language) != nil {
                     Button("Use automatic translation") {
-                        model.setOverride(nil, markID: e.markID, language: e.language); revision += 1
+                        model.setOverride(nil, markID: e.markID, language: e.language, note: e.note); revision += 1
                     }
                 }
                 Button("Cancel", role: .cancel) {}

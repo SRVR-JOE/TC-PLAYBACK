@@ -950,7 +950,7 @@ struct CuePointsView: View {
                              "Screens on": "Camera 4, hold the screens", "Bridge": "Camera 2, slow pull out"]
                 for p in points { if let n = notes[p.name] { p.callNote = n } }
                 if let drop = points.first(where: { $0.name == "Chorus drop" }) {
-                    CueCallerUIModel.shared.setOverride("Abierto a la banda, todas las cámaras", markID: drop.id, language: "es-MX")
+                    CueCallerUIModel.shared.setOverride("Abierto a la banda, todas las cámaras", markID: drop.id, language: "es-MX", note: drop.callNote)
                 }
                 try? context.save()
             }
