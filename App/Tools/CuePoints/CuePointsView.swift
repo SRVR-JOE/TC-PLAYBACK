@@ -154,6 +154,16 @@ struct CuePointsView: View {
                     try? await Task.sleep(for: .milliseconds(250))
                 }
                 lines.append("marks added \(points.count - before), still playing: \(engine.transport == .playing ? "yes" : "NO"), playhead \(String(format: "%.3f", engine.currentTime))")
+                // Play back over the new marks and log when each trigger fires vs when its mark is heard.
+                let first = points.filter { $0.time >= 30 }.map(\.time).min() ?? 30
+                CueTriggerClock.shared.debugLog = []
+                engine.seek(to: max(0, first - 1)); engine.play()
+                try? await Task.sleep(for: .seconds(4))
+                for e in CueTriggerClock.shared.debugLog {
+                    lines.append(String(format: "trigger mark %.3f  heard at fire %.3f (%+.1f ms)  heard when on screen %.3f (%+.1f ms)",
+                                        e.mark, e.heardAtFire, (e.heardAtFire - e.mark) * 1000, e.heardOnGlass, (e.heardOnGlass - e.mark) * 1000))
+                }
+                lines.append("triggers fired \(CueTriggerClock.shared.debugLog.count)")
                 engine.stop()
                 let report = lines.joined(separator: "\n")
                 print("LIVEMARKTEST\n" + report)
@@ -219,7 +229,10 @@ struct CuePointsView: View {
 
     private func timeline(_ track: Track) -> some View {
         TimelineEditor(duration: track.duration, peaks: peaks, points: points, clock: clock,
-                       playhead: engine.currentTime, isPlaying: engine.transport == .playing,
+                       // Heard position: the line crosses a mark when you hear it (speaker delay allowed for).
+                       playhead: engine.transport == .playing && allowSpeakerDelay
+                           ? max(0, engine.currentTime - CueTriggerClock.outputDelay) : engine.currentTime,
+                       isPlaying: engine.transport == .playing,
                        selected: $selected,
                        onSeek: { if loaded { engine.seek(to: $0) } },
                        onMove: move, span: $span,

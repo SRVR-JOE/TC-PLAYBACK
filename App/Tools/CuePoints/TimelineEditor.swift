@@ -211,16 +211,32 @@ struct TimelineEditor: View {
         return min(max(0, (t * f).rounded() / f), duration)
     }
 
-    /// Mark under a point: within its lane by 14 pt; over the ruler/waveform, any visible mark's line by 8 pt.
+    /// Mark under a finger. In a lane: anywhere on its name flag, or within 22 pt of its line
+    /// (finger-sized, so grabbing a mark never falls through to panning the timeline). Over the
+    /// ruler or waveform: within 16 pt of any visible mark's line. Topmost (last drawn) wins.
     private func hitMark(at loc: CGPoint, pps: CGFloat, _ L: Layout) -> CuePoint? {
         let laneHit = L.lane(atY: loc.y)
         let candidates = points.filter { p in
             guard let l = lane(of: p) else { return false }
             return laneHit == nil || l == laneHit
         }
-        let reach: CGFloat = laneHit == nil ? 8 : 14
+        if laneHit != nil {
+            let fontSize: CGFloat = L.laneH < 20 ? 10 : 11
+            if let onFlag = candidates.last(where: { p in
+                let px = x(of: p.time, pps: pps)
+                return loc.x >= px - 4 && loc.x <= px + flagWidth(p, fontSize: fontSize)
+            }) { return onFlag }
+        }
+        let reach: CGFloat = laneHit == nil ? 16 : 22
         return candidates.min(by: { abs(x(of: $0.time, pps: pps) - loc.x) < abs(x(of: $1.time, pps: pps) - loc.x) })
             .flatMap { abs(x(of: $0.time, pps: pps) - loc.x) <= reach ? $0 : nil }
+    }
+
+    /// Width of a mark's name flag, matching `drawMarks`.
+    private func flagWidth(_ p: CuePoint, fontSize: CGFloat) -> CGFloat {
+        let label = "\(idx.number(of: p)) \(p.name)" as NSString
+        let w = label.size(withAttributes: [.font: UIFont.systemFont(ofSize: fontSize, weight: .semibold)]).width
+        return min(ceil(w) + 8, 208)
     }
 
     private func setSelection(_ s: Set<UUID>, primary: UUID?) {
@@ -469,15 +485,16 @@ struct TriggerReadout: View {
     /// Cue numbers and colours by type; nil = numbered by position, mark colour.
     var index: CuePointIndex? = nil
 
-    @State private var lastHit: (id: UUID, at: Date)?
-    @State private var previous: TimeInterval = 0
+    @AppStorage("cuePoints.allowSpeakerDelay") private var allowSpeakerDelay = true
+    private var trigger: CueTriggerClock { CueTriggerClock.shared }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !isPlaying)) { tl in
-            let now = tl.date
+        TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !isPlaying)) { _ in
+            // While playing, show what's being heard (trigger clock); parked, the playhead.
+            let playhead = isPlaying ? trigger.heardTime : self.playhead
             let current = points.last(where: { $0.time <= playhead + 0.0005 })
             let next = points.first(where: { $0.time > playhead + 0.0005 })
-            let flashing = lastHit.map { now.timeIntervalSince($0.at) < 0.6 } ?? false
+            let flashing = isPlaying && trigger.isFlashing()
             let flashColor = current.flatMap { Color(hexString: colorHex($0) ?? "") } ?? Theme.standby
             HStack(spacing: 14) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -507,16 +524,17 @@ struct TriggerReadout: View {
             .background(flashing ? flashColor : Theme.surface, in: RoundedRectangle(cornerRadius: Theme.corner))
             .overlay(RoundedRectangle(cornerRadius: Theme.corner).strokeBorder(Theme.hairline, lineWidth: 1))
         }
-        .onChange(of: playhead) { old, new in
-            defer { previous = new }
-            guard isPlaying, new > old, new - old < 1 else { return }
-            if let hit = points.last(where: { $0.time > old && $0.time <= new }) {
-                lastHit = (hit.id, Date())
-                Haptics.tick()
-                CueFlash.fire(markHex: colorHex(hit))
-            }
-        }
+        // Triggers fire from the display-synced clock, on the frame where the mark is heard.
+        .onAppear { syncMarks(); trigger.start(engine: .shared) }
+        .onDisappear { trigger.stop() }
+        .onChange(of: points.map { "\($0.id)\($0.time)\(colorHex($0) ?? "")" }) { _, _ in syncMarks() }
+        .onChange(of: allowSpeakerDelay) { _, _ in syncMarks() }
         .accessibilityElement(children: .combine)
+    }
+
+    private func syncMarks() {
+        trigger.compensateLatency = allowSpeakerDelay
+        trigger.marks = points.sorted { $0.time < $1.time }.map { .init(id: $0.id, time: $0.time, colorHex: colorHex($0)) }
     }
 
     private func cueLabel(_ p: CuePoint) -> String {

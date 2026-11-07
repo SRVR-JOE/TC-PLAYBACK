@@ -65,18 +65,25 @@ final class ScreenFlash {
     private var window: UIWindow?
     private var gen = 0
 
-    func flash(_ color: UIColor, duration: Double) {
+    /// Builds the (hidden) flash window ahead of time so the first flash isn't late.
+    @discardableResult
+    func prepare() -> UIWindow? {
+        if let window { return window }
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive }) else { return }
-        let w = window ?? {
-            let w = UIWindow(windowScene: scene)
-            w.windowLevel = .alert + 1
-            w.isUserInteractionEnabled = false
-            w.rootViewController = UIViewController()
-            return w
-        }()
+            .first(where: { $0.activationState == .foregroundActive }) else { return nil }
+        let w = UIWindow(windowScene: scene)
+        w.windowLevel = .alert + 1
+        w.isUserInteractionEnabled = false
+        w.rootViewController = UIViewController()
+        w.alpha = 0
+        w.isHidden = true
         window = w
+        return w
+    }
+
+    func flash(_ color: UIColor, duration: Double) {
+        guard let w = prepare() else { return }
         gen += 1
         let mine = gen
         w.rootViewController?.view.backgroundColor = color
