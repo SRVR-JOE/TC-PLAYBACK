@@ -15,6 +15,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKey.panicFadeSeconds) private var panicFade = 1.0
     @AppStorage(SettingsKey.autoDetectTimecode) private var autoDetect = true
     @AppStorage(SettingsKey.readExternalInput) private var readInput = false
+    @Bindable private var caller = CueCallerUIModel.shared
 
     var body: some View {
         NavigationStack {
@@ -70,6 +71,23 @@ struct SettingsView: View {
                     }
                 } header: { header("Show") } footer: {
                     Text("With Show Lock on, cues can’t be edited, reordered or scrubbed, and Stop needs a one-second hold.")
+                }
+                .listRowBackground(Theme.surface)
+
+                Section {
+                    Toggle("Cue caller", isOn: $caller.isEngaged).tint(Theme.go)
+                    NavigationLink {
+                        CueCallerSettingsForm()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text("Areas, voices and timing")
+                            Spacer()
+                            CueCallerLamp(status: caller.status)
+                            Text(caller.status.label).font(Theme.caption).foregroundStyle(Theme.textSecondary)
+                        }
+                    }
+                } header: { header("Cue caller") } footer: {
+                    Text("Speaks each mark’s call over comms, in each area’s language.")
                 }
                 .listRowBackground(Theme.surface)
 
