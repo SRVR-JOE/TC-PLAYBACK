@@ -43,7 +43,6 @@ struct CuePointsView: View {
     // Live marking timing
     @AppStorage("cuePoints.tapDelayMs") private var tapDelayMs = 0.0
     @AppStorage("cuePoints.allowSpeakerDelay") private var allowSpeakerDelay = true
-    @State private var sampler = PlayheadSampler()
     @State private var droppedIDs: [UUID] = []
     @State private var undoVisible = false
     @State private var undoHideTask: Task<Void, Never>?
@@ -149,7 +148,7 @@ struct CuePointsView: View {
                 var lines: [String] = ["loaded=\(loaded) nameOnDrop=\(nameOnDrop) tapDelayMs=\(tapDelayMs) speakerDelay=\(allowSpeakerDelay) latency=\(String(format: "%.4f", CueMarkTiming.sessionOutputLatency))"]
                 let before = points.count
                 for i in 0..<8 {
-                    let ph = engine.currentTime
+                    let ph = engine.preciseTime
                     mark(type: activeType)
                     let t = points.first(where: { $0.id == lastMarkID })?.time ?? -1
                     lines.append(String(format: "tap %d playhead %.3f mark %.3f diff %+.3f playing %@", i + 1, ph, t, t - ph,
@@ -170,7 +169,6 @@ struct CuePointsView: View {
         }
         .onChange(of: track?.id) { _, _ in open() }
         .onChange(of: store.types) { _, _ in rebuildExports() }
-        .onChange(of: engine.currentTime) { _, t in sampler.note(t) }
         .sheet(isPresented: $showTypes, onDismiss: reload) {
             CuePointTypesSheet(store: store, counts: typeCounts, onRenumber: renumber)
         }
@@ -948,8 +946,9 @@ struct CuePointsView: View {
     /// engine's 30 Hz updates, less speaker delay and tap delay while playing.
     private func captureTime() -> TimeInterval {
         let playing = engine.transport == .playing
-        let ph = CueMarkTiming.playhead(reported: engine.currentTime, reportedAt: sampler.value == engine.currentTime ? sampler.stamp : 0,
-                                        now: CACurrentMediaTime(), playing: playing)
+        // While playing, read the render thread's position directly (sample-accurate) rather than
+        // the 30 Hz published value, so a mark lands where the finger hit.
+        let ph = playing ? engine.preciseTime : engine.currentTime
         return CueMarkTiming.markTime(playhead: ph, playing: playing, tapDelayMs: tapDelayMs,
                                       outputLatency: allowSpeakerDelay ? CueMarkTiming.sessionOutputLatency : 0,
                                       fps: clock.rate.fps, duration: track?.duration ?? 0)

@@ -306,6 +306,16 @@ final class PlaybackEngine {
 
     func togglePlayPause() { transport == .playing ? pause() : play() }
 
+    /// Sample-accurate playhead read straight from the render thread's position (updated every
+    /// audio buffer). `currentTime` is only republished at 30 Hz. Used to time live cue marks.
+    var preciseTime: TimeInterval {
+        guard let core = graph?.core, source != .none else { return currentTime }
+        let handled = core.handledSeekGenOut.load(ordering: .acquiring)
+        guard pendingSeekGen == 0 || handled >= pendingSeekGen || source.isGenerator else { return currentTime }
+        let t = Double(core.positionFrames.load(ordering: .acquiring)) / core.sampleRate
+        return duration > 0 ? min(t, duration) : t
+    }
+
     func seek(to time: TimeInterval) {
         guard let core = graph?.core, source != .none else { currentTime = 0; return }
         var t = max(0, time.isFinite ? time : 0)
