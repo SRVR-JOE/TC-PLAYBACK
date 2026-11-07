@@ -55,6 +55,11 @@ final class RenderCore: @unchecked Sendable {
     let ring: SPSCRingBuffer
     /// Source L/R samples for the timecode readers and scope.
     let analysisRing: SPSCRingBuffer
+    /// Post-mix output tap (what leaves for the device), written only while `outputTapEnabled`.
+    /// Read by the Scope page. Additive.
+    let outputTap: SPSCRingBuffer
+    let outputTapEnabled = Atomic<Bool>(false)
+    let outputTapClock = TapClock()
 
     // MARK: Control (main → render)
     let sourceKind = Atomic<Int>(0)
@@ -115,6 +120,7 @@ final class RenderCore: @unchecked Sendable {
         transportRampFrames = min(Self.maxChunk, max(1, Int(sampleRate * 0.005)))
         ring = SPSCRingBuffer(channels: 2, minimumCapacity: Int(sampleRate * 2.5))
         analysisRing = SPSCRingBuffer(channels: 2, minimumCapacity: Int(sampleRate * 1.0))
+        outputTap = SPSCRingBuffer(channels: 2, minimumCapacity: Int(sampleRate * 2.0))
         let initialBits = RoutingMath.pack(ChannelRouting())
         routingBits = Atomic<UInt64>(initialBits)
         state = .allocate(capacity: 1)
@@ -231,7 +237,15 @@ final class RenderCore: @unchecked Sendable {
 
     /// Render `frames` frames into the two output channel buffers. Real-time safe.
     func render(frames: Int, outL: UnsafeMutablePointer<Float>, outR: UnsafeMutablePointer<Float>) {
+        render(frames: frames, outL: outL, outR: outR, hostTime: 0)
+    }
+
+    /// As above; `hostTime` (mach ticks of the buffer's first frame, 0 = unknown) anchors the
+    /// post-mix output tap in host time so it can be lined up against the input.
+    func render(frames: Int, outL: UnsafeMutablePointer<Float>, outR: UnsafeMutablePointer<Float>, hostTime: UInt64) {
         seenConfigGen.store(configGen.load(ordering: .sequentiallyConsistent), ordering: .sequentiallyConsistent)
+        let tapOn = outputTapEnabled.load(ordering: .relaxed)
+        if tapOn { outputTapClock.note(hostTime: hostTime, frameIndex: outputTap.totalWritten, sampleRate: sampleRate) }
         var offset = 0
         while offset < frames {
             let n = min(Self.maxChunk, frames - offset)
@@ -326,6 +340,7 @@ final class RenderCore: @unchecked Sendable {
         outMSL.store(msol.bitPattern, ordering: .relaxed); outMSR.store(msor.bitPattern, ordering: .relaxed)
         if ol >= 0.999 { clipL.store(true, ordering: .relaxed) }
         if or >= 0.999 { clipR.store(true, ordering: .relaxed) }
+        if outputTapEnabled.load(ordering: .relaxed) { outputTap.write(outL, outR, count: n) }
 
         renderedFrames.wrappingAdd(n, ordering: .releasing)
     }

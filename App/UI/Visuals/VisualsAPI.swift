@@ -36,7 +36,11 @@ struct StereoMeterView: View {
 struct OscilloscopeView: View {
     enum Mode: String, CaseIterable, Identifiable { case overlay, stacked, xy, eye; var id: String { rawValue } }
     @Binding var mode: Mode
-    var body: some View { OscilloscopeContent(mode: $mode) }
+    /// Additive: share the timebase (index into `OscilloscopeContent.timebases`) between scopes.
+    var timebase: Binding<Int>? = nil
+    /// Additive: an outside hold (true = stopped); the scope's Run/Stop key drives it.
+    var hold: Binding<Bool>? = nil
+    var body: some View { OscilloscopeContent(mode: $mode, sharedTimebase: timebase, externalHold: hold) }
 }
 
 /// Waveform overview strip of the active cue with playhead, elapsed tint, tap/drag to seek
