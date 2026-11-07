@@ -22,6 +22,9 @@ final class CuePoint {
     /// Fade as typed: "" (default), "2" seconds, "+" (until the next point of the same type),
     /// "1/2" (split: 1 s up / 2 s down). Resolve with `CueFade.resolve`.
     var fade: String = ""
+    /// Cue caller: what to say over comms for this mark ("Camera 3, push in slow"). Written once
+    /// in the operator's language, translated per area. Empty = no spoken call for this mark.
+    var callNote: String = ""
 
     init(trackID: UUID, time: TimeInterval, name: String, colorHex: String? = nil) {
         self.id = UUID(); self.trackID = trackID; self.time = time; self.name = name
