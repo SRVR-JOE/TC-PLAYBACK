@@ -40,6 +40,7 @@ final class ShellModel {
     var showPads = false
     var showOutputTest = false
     var showInputAnalyzer = false
+    var showCuePoints = false
     var banner: ShellBanner?
     /// Cue whose number is being edited inline in the list.
     var editingNumberCueID: UUID?

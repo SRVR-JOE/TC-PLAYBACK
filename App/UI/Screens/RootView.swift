@@ -38,6 +38,7 @@ struct RootView: View {
         .sheet(isPresented: $shell.showChecklist) { PreShowChecklist().preferredColorScheme(scheme) }
         .fullScreenCover(isPresented: $shell.showPads) { ToolSheet(title: "Pads") { PadsSlot() }.preferredColorScheme(scheme) }
         .fullScreenCover(isPresented: $shell.showOutputTest) { ToolSheet(title: "Output test") { OutputTestSlot() }.preferredColorScheme(scheme) }
+        .fullScreenCover(isPresented: $shell.showCuePoints) { ToolSheet(title: "Cue points") { CuePointsView() }.preferredColorScheme(scheme) }
         .fullScreenCover(isPresented: $shell.showInputAnalyzer) { ToolSheet(title: "Input analyzer") { InputAnalyzerView() }.preferredColorScheme(scheme) }
         .fullScreenCover(isPresented: $shell.showFullClock) { FullScreenClock() }
         .fullScreenCover(isPresented: $shell.showShowMode) { PhoneShowMode().preferredColorScheme(.dark) }
@@ -85,6 +86,7 @@ struct RootView: View {
         #if DEBUG
         // -inputAnalyzer: open the Input analyzer on launch (QA only; listens, never plays).
         if ProcessInfo.processInfo.arguments.contains("-inputAnalyzer") { shell.showInputAnalyzer = true }
+        if ProcessInfo.processInfo.arguments.contains("-cuePoints") { shell.showCuePoints = true }
         // -importShow <path>: open a show/audio file from disk as if it came from Files (QA only).
         if let i = ProcessInfo.processInfo.arguments.firstIndex(of: "-importShow"), i + 1 < ProcessInfo.processInfo.arguments.count {
             shell.handleOpenURL(URL(fileURLWithPath: ProcessInfo.processInfo.arguments[i + 1]), context: context)
@@ -205,6 +207,7 @@ struct LayoutSwitcher: View {
             Divider()
             Button { shell.showPads = true } label: { Label("Pads", systemImage: "square.grid.3x3") }
             Button { shell.showOutputTest = true } label: { Label("Output test", systemImage: "speaker.wave.2") }
+            Button { shell.showCuePoints = true } label: { Label("Cue points", systemImage: "flag") }
             Button { shell.showInputAnalyzer = true } label: { Label("Input analyzer", systemImage: "waveform.badge.magnifyingglass") }
         } label: {
             Label(layout.label, systemImage: layout.symbol)
@@ -318,11 +321,13 @@ private struct PhoneMoreList: View {
     @Bindable private var shell = ShellModel.shared
     @State private var outputTest = false
     @State private var inputAnalyzer = false
+    @State private var cuePoints = false
     var body: some View {
         List {
             Section {
                 row("Playlists", "list.bullet") { shell.showPlaylists = true }
                 row("Output test", "speaker.wave.2") { outputTest = true }
+                row("Cue points", "flag") { cuePoints = true }
                 row("Input analyzer", "waveform.badge.magnifyingglass") { inputAnalyzer = true }
                 row("Settings", "gearshape") { shell.showSettings = true }
             }
@@ -339,6 +344,12 @@ private struct PhoneMoreList: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Theme.background)
                 .navigationTitle("Output test")
+        }
+        .navigationDestination(isPresented: $cuePoints) {
+            CuePointsView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.background)
+                .navigationBarTitleDisplayMode(.inline)
         }
         .navigationDestination(isPresented: $inputAnalyzer) {
             InputAnalyzerView()

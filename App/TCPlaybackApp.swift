@@ -8,6 +8,6 @@ struct TCPlaybackApp: App {
         WindowGroup {
             RootView()
         }
-        .modelContainer(for: [Track.self, Playlist.self, Cue.self])
+        .modelContainer(for: [Track.self, Playlist.self, Cue.self, CuePoint.self])
     }
 }
