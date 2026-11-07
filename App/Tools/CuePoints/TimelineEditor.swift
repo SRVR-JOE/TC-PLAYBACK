@@ -50,6 +50,7 @@ struct TimelineEditor: View {
 
     /// Visible span in seconds (zoom), owned by the parent so a zoom slider can drive it.
     @Binding var span: TimeInterval
+    var beatGrid: BeatGrid? = nil // BEATGRID hook: bars/beats strip, bar lines, snap
     @State private var spanAtPinch: TimeInterval?
     /// Left edge of the view in seconds.
     @State private var origin: TimeInterval = 0
@@ -128,6 +129,7 @@ struct TimelineEditor: View {
     private func time(atX x: CGFloat, pps: CGFloat) -> TimeInterval { origin + Double(x / pps) }
     private func x(of t: TimeInterval, pps: CGFloat) -> CGFloat { CGFloat(t - origin) * pps }
     private func snap(_ t: TimeInterval) -> TimeInterval {
+        let t = beatGrid?.snapped(t) ?? t // BEATGRID hook
         let f = clock.rate.fps
         return min(max(0, (t * f).rounded() / f), duration)
     }
@@ -215,6 +217,13 @@ struct TimelineEditor: View {
                 l.clip(to: Path(CGRect(x: max(0, played), y: 0, width: size.width, height: size.height)))
                 l.fill(path, with: .color(Theme.textTertiary))
             }
+        }
+
+        // BEATGRID hook: bars/beats strip along the bottom edge, bar lines through the lanes.
+        if let g = beatGrid {
+            let h = BeatGridRuler.bandHeight(for: g)
+            BeatGridRuler.draw(gc, grid: g, band: CGRect(x: 0, y: size.height - h, width: size.width, height: h),
+                               lines: rulerH...(size.height - h), origin: origin, pps: pps, duration: duration)
         }
 
         // Marks
