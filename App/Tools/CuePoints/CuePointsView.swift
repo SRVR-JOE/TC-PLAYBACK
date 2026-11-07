@@ -40,6 +40,7 @@ struct CuePointsView: View {
                         HStack(alignment: .top, spacing: Theme.pad) {
                             VStack(spacing: 10) {
                                 header(track)
+                                CueVideoPanel(track: track, clock: clock, layout: .wide) // VIDEO hook
                                 TriggerReadout(points: points, clock: clock, playhead: engine.currentTime,
                                                isPlaying: engine.transport == .playing, large: true)
                                 transport
@@ -57,6 +58,7 @@ struct CuePointsView: View {
                         TriggerReadout(points: points, clock: clock, playhead: engine.currentTime,
                                        isPlaying: engine.transport == .playing)
                             .padding(.horizontal, Theme.pad)
+                        CueVideoPanel(track: track, clock: clock, layout: .strip).padding([.horizontal, .top], Theme.pad) // VIDEO hook
                         timelineBar(track)
                         timeline(track).frame(height: 170).padding(.horizontal, Theme.pad)
                         transport
@@ -73,6 +75,7 @@ struct CuePointsView: View {
         .toolbar {
             ToolbarItem(placement: .principal) { trackMenu }
             ToolbarItem(placement: .topBarTrailing) { exportMenu(prominent: false) }
+            ToolbarItem(placement: .topBarTrailing) { if let track { CueVideoMenu(track: track) } } // VIDEO hook
         }
         .onAppear(perform: initialTrack)
         #if DEBUG
@@ -139,7 +142,8 @@ struct CuePointsView: View {
                        playhead: engine.currentTime, isPlaying: engine.transport == .playing,
                        selected: $selected,
                        onSeek: { if loaded { engine.seek(to: $0) } },
-                       onMove: move, span: $span)
+                       onMove: move, span: $span,
+                       videoLane: CueVideoController.shared.timelineLane) // VIDEO hook
             .id(track.id)
     }
 

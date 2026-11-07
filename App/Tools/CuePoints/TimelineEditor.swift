@@ -50,6 +50,8 @@ struct TimelineEditor: View {
 
     /// Visible span in seconds (zoom), owned by the parent so a zoom slider can drive it.
     @Binding var span: TimeInterval
+    /// VIDEO hook: optional film-strip lane under the timeline, given the visible (origin, span).
+    var videoLane: ((TimeInterval, TimeInterval) -> AnyView)? = nil
     @State private var spanAtPinch: TimeInterval?
     /// Left edge of the view in seconds.
     @State private var origin: TimeInterval = 0
@@ -60,10 +62,13 @@ struct TimelineEditor: View {
     private let gutter: CGFloat = 52
 
     var body: some View {
+        VStack(spacing: 0) { // VIDEO hook (wrapper)
         HStack(spacing: 0) {
             laneHeaders
             Rectangle().fill(Theme.hairline).frame(width: 1)
             canvas
+        }
+        if let videoLane { Rectangle().fill(Theme.hairline).frame(height: 1); videoLane(origin, span) } // VIDEO hook
         }
         .clipShape(RoundedRectangle(cornerRadius: Theme.corner))
         .overlay(RoundedRectangle(cornerRadius: Theme.corner).strokeBorder(Theme.hairline, lineWidth: 1))
