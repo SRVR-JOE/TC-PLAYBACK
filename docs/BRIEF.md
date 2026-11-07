@@ -1,6 +1,6 @@
 # TC Playback — product brief (read this first)
 
-PIXEL HAUS app (never Solotech-branded). Universal iPhone + iPad, iOS 18+, SwiftUI + AVAudioEngine,
+PIXEL HAUS app. Universal iPhone + iPad, iOS 18+, SwiftUI + AVAudioEngine,
 SwiftData. Bundle `com.pixelhaus.tcplayback`. Swift 5 language mode in the app target.
 
 ## Who uses it

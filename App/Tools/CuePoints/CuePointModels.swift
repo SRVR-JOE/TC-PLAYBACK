@@ -14,6 +14,14 @@ final class CuePoint {
     var name: String
     var colorHex: String?
     var createdAt: Date
+    // CONTRACT (team build) — additive fields, defaults keep existing stores migrating.
+    /// Cue type (lane) this point belongs to; nil = the default "Cue" type.
+    var typeID: UUID? = nil
+    /// Console cue number, free text ("1", "2.5", "101"). Empty = use the point's position.
+    var cueID: String = ""
+    /// Fade as typed: "" (default), "2" seconds, "+" (until the next point of the same type),
+    /// "1/2" (split: 1 s up / 2 s down). Resolve with `CueFade.resolve`.
+    var fade: String = ""
 
     init(trackID: UUID, time: TimeInterval, name: String, colorHex: String? = nil) {
         self.id = UUID(); self.trackID = trackID; self.time = time; self.name = name
@@ -71,6 +79,52 @@ struct CuePointRow: Equatable {
     var name: String
     var time: TimeInterval
     var colorHex: String?
+    // CONTRACT (team build) — additive, defaulted so existing call sites compile.
+    /// Console cue number ("" → use `number`).
+    var cueID: String = ""
+    /// Cue type name ("Cue", "Lights", "Video", "Pyro"…), and its id.
+    var typeName: String = "Cue"
+    var typeID: UUID? = nil
+    /// Resolved fade in seconds (nil = none / console default).
+    var fadeIn: Double? = nil
+    var fadeOut: Double? = nil
+
+    /// What consoles show as the cue number.
+    var consoleCueID: String { cueID.isEmpty ? String(number) : cueID }
+}
+
+/// A cue type = a lane on the timeline and a group in exports (e.g. a MA3 sequence or a
+/// disguise track). Stored as JSON in UserDefaults (`CuePointTypeStore`), app-wide.
+struct CuePointType: Codable, Identifiable, Equatable, Hashable {
+    var id: UUID = UUID()
+    var name: String
+    var colorHex: String
+    var hidden = false
+    var locked = false
+    /// MA3 sequence number this type fires (0 = unset). Used by the MA3 export.
+    var ma3Sequence: Int = 0
+
+    static let defaultID = UUID(uuidString: "00000000-0000-0000-0000-00000000C0E0")!
+    static let defaults: [CuePointType] = [
+        CuePointType(id: defaultID, name: "Cue", colorHex: CuePointColor.amber.rawValue, ma3Sequence: 1),
+        CuePointType(name: "Lights", colorHex: CuePointColor.blue.rawValue, ma3Sequence: 2),
+        CuePointType(name: "Video", colorHex: CuePointColor.green.rawValue, ma3Sequence: 3),
+        CuePointType(name: "Special FX", colorHex: CuePointColor.red.rawValue, ma3Sequence: 4),
+    ]
+}
+
+/// Fade syntax shared with CuePoints-style tools: "2" = 2 s, "+" = time until the next point
+/// of the same type, "1/2" = 1 s in / 2 s out.
+enum CueFade {
+    static func resolve(_ text: String, at time: TimeInterval, nextSameType: TimeInterval?) -> (in: Double?, out: Double?) {
+        let t = text.trimmingCharacters(in: .whitespaces)
+        if t.isEmpty { return (nil, nil) }
+        if t == "+" { let g = nextSameType.map { max(0, $0 - time) }; return (g, g) }
+        let parts = t.split(separator: "/").map { Double($0.trimmingCharacters(in: .whitespaces)) }
+        if parts.count == 2, let a = parts[0], let b = parts[1] { return (a, b) }
+        if let v = Double(t) { return (v, v) }
+        return (nil, nil)
+    }
 }
 
 // MARK: - Exporters
