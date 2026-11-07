@@ -198,14 +198,36 @@ final class ToolsCuePointEditorTests: XCTestCase {
 
     // MARK: Labels
 
+    func testPresetSeedAndMigration() {
+        let d = UserDefaults(suiteName: "presets-\(UUID())")!
+        d.set(["Pyro", "Verse", "Pre-chorus", "My cue"], forKey: CueLabelPresetStore.key)
+        let s = CueLabelPresetStore(defaults: d)
+        for l in ["Pre-Verse", "Pre-Chorus", "Build", "Solo", "Chorus"] { XCTAssertTrue(s.labels.contains(l), l) }
+        XCTAssertFalse(s.labels.contains("Pre-chorus"))
+        XCTAssertTrue(s.labels.contains("My cue"), "user labels kept")
+        XCTAssertLessThan(s.labels.firstIndex(of: "Pre-Verse")!, s.labels.firstIndex(of: "Verse")!)
+        XCTAssertEqual(CueLabelPresetStore(defaults: d).labels, s.labels, "migration runs once")
+        let fresh = CueLabelPresetStore(defaults: UserDefaults(suiteName: "presets-\(UUID())")!)
+        XCTAssertEqual(fresh.labels, CueLabelPresetStore.seed)
+    }
+
     func testLabelNumbering() {
-        XCTAssertEqual(CueLabelNaming.numbered("Chorus", existing: []), "Chorus")
-        XCTAssertEqual(CueLabelNaming.numbered("Chorus", existing: ["Verse"]), "Chorus")
-        XCTAssertEqual(CueLabelNaming.numbered("Chorus", existing: ["Chorus"]), "Chorus 2")
-        XCTAssertEqual(CueLabelNaming.numbered("Chorus", existing: ["Chorus", "Chorus 2"]), "Chorus 3")
-        XCTAssertEqual(CueLabelNaming.numbered("Chorus", existing: ["chorus 4"]), "Chorus 5", "case-insensitive, after the highest")
-        XCTAssertEqual(CueLabelNaming.numbered("Chorus", existing: ["Choruses", "Chorus 2b", "Pre-chorus"]), "Chorus")
-        XCTAssertEqual(CueLabelNaming.numbered(" Drop ", existing: ["Drop"]), "Drop 2")
+        // One-off labels: plain the first time, numbered on repeats.
+        XCTAssertEqual(CueLabelNaming.numbered("Hit", existing: []), "Hit")
+        XCTAssertEqual(CueLabelNaming.numbered("Hit", existing: ["Verse 1"]), "Hit")
+        XCTAssertEqual(CueLabelNaming.numbered("Hit", existing: ["Hit"]), "Hit 2")
+        XCTAssertEqual(CueLabelNaming.numbered("Hit", existing: ["Hit", "Hit 2"]), "Hit 3")
+        XCTAssertEqual(CueLabelNaming.numbered("Hit", existing: ["hit 4"]), "Hit 5", "case-insensitive, after the highest")
+        XCTAssertEqual(CueLabelNaming.numbered("Hit", existing: ["Hits", "Hit 2b"]), "Hit")
+        // Song sections: numbered from 1.
+        XCTAssertEqual(CueLabelNaming.numbered("Verse", existing: []), "Verse 1")
+        XCTAssertEqual(CueLabelNaming.numbered("Verse", existing: ["Verse 1"]), "Verse 2")
+        XCTAssertEqual(CueLabelNaming.numbered("Chorus", existing: ["Chorus 1", "Pre-Chorus 1", "Chorus 2"]), "Chorus 3")
+        XCTAssertEqual(CueLabelNaming.numbered("Pre-Chorus", existing: ["Chorus 1"]), "Pre-Chorus 1")
+        XCTAssertEqual(CueLabelNaming.numbered("Chorus", existing: ["Chorus"]), "Chorus 2", "an old plain one counts as 1")
+        XCTAssertEqual(CueLabelNaming.numbered(" Solo ", existing: []), "Solo 1")
+        XCTAssertEqual(CueLabelNaming.numbered("Build", existing: ["Build 1"]), "Build 2")
+        XCTAssertEqual(CueLabelNaming.apply("Verse", count: 3, otherNames: [], numberRepeats: true), ["Verse 1", "Verse 2", "Verse 3"])
     }
 
     func testApplyLabelToSeveral() {

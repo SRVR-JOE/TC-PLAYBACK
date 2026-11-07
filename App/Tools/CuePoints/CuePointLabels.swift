@@ -6,15 +6,35 @@ import Observation
 final class CueLabelPresetStore {
     static let shared = CueLabelPresetStore()
     static let key = "cuePoints.labelPresets"
-    static let seed = ["Intro", "Verse", "Pre-chorus", "Chorus", "Bridge", "Drop", "Breakdown", "Outro",
-                       "Hit", "Blackout", "Strobe", "Pyro", "Confetti", "Walk-in", "Walk-off"]
+    static let seed = ["Intro", "Pre-Verse", "Verse", "Pre-Chorus", "Chorus", "Build", "Drop", "Solo", "Bridge",
+                       "Breakdown", "Outro", "Hit", "Blackout", "Strobe", "Pyro", "Confetti", "Walk-in", "Walk-off"]
+    /// Song sections are numbered from the first one: Verse 1, Verse 2, Verse 3…
+    static let songSections: Set<String> = ["pre-verse", "verse", "pre-chorus", "chorus", "build", "drop", "solo",
+                                            "bridge", "breakdown", "post-chorus", "interlude", "hook"]
+    static func isSongSection(_ label: String) -> Bool {
+        songSections.contains(label.trimmingCharacters(in: .whitespaces).lowercased())
+    }
+    /// Bump when the seed gains labels; existing lists get the new ones added once.
+    static let seedVersion = 2
 
     private(set) var labels: [String]
     @ObservationIgnored private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        labels = defaults.stringArray(forKey: Self.key) ?? Self.seed
+        var list = defaults.stringArray(forKey: Self.key) ?? Self.seed
+        if defaults.integer(forKey: Self.key + ".version") < Self.seedVersion {
+            // Keep the user's list and order; tidy the old spelling and add the new song sections.
+            list = list.map { $0 == "Pre-chorus" ? "Pre-Chorus" : $0 }
+            for (i, l) in Self.seed.enumerated() where !list.contains(where: { $0.caseInsensitiveCompare(l) == .orderedSame }) {
+                let after = Self.seed[..<i].last { p in list.contains { $0.caseInsensitiveCompare(p) == .orderedSame } }
+                let at = after.flatMap { a in list.firstIndex { $0.caseInsensitiveCompare(a) == .orderedSame } }.map { $0 + 1 } ?? 0
+                list.insert(l, at: at)
+            }
+            defaults.set(list, forKey: Self.key)
+            defaults.set(Self.seedVersion, forKey: Self.key + ".version")
+        }
+        labels = list
     }
 
     func add(_ label: String) {
@@ -37,9 +57,11 @@ final class CueLabelPresetStore {
 /// "Chorus" twice in one type becomes "Chorus", "Chorus 2", "Chorus 3"…
 enum CueLabelNaming {
     /// `label`, or `label N` with N one more than the highest repeat already in `existing`.
-    static func numbered(_ label: String, existing: [String]) -> String {
+    /// Song sections (`fromOne`) always carry a number: "Verse 1", then "Verse 2".
+    static func numbered(_ label: String, existing: [String], fromOne: Bool? = nil) -> String {
         let base = label.trimmingCharacters(in: .whitespaces)
         guard !base.isEmpty else { return base }
+        let fromOne = fromOne ?? CueLabelPresetStore.isSongSection(base)
         var highest = 0
         for name in existing {
             let n = name.trimmingCharacters(in: .whitespaces)
@@ -48,6 +70,7 @@ enum CueLabelNaming {
                   let k = Int(n.dropFirst(base.count + 1)), k > 0 else { continue }
             highest = max(highest, k)
         }
+        if fromOne { return "\(base) \(highest + 1)" }
         return highest == 0 ? base : "\(base) \(highest + 1)"
     }
 
