@@ -326,6 +326,7 @@ final class ToolsCueCallerElevenLabsTests: XCTestCase {
         XCTAssertEqual(ElevenLabsError.from(status: 401, body: body(#"{"detail":{"status":"invalid_api_key","message":"Invalid API key"}}"#)), .unauthorized)
         XCTAssertEqual(ElevenLabsError.from(status: 429, body: body(#"{"detail":{"status":"too_many_concurrent_requests"}}"#)), .rateLimited)
         XCTAssertEqual(ElevenLabsError.from(status: 402, body: Data()), .quotaExceeded)
+        XCTAssertEqual(ElevenLabsError.from(status: 402, body: body(#"{"detail":{"type":"payment_required","code":"paid_plan_required","message":"Free users cannot use library voices via the API.","status":"payment_required"}}"#)), .paidPlanRequired)
         XCTAssertEqual(ElevenLabsError.from(status: 500, body: body(#"{"detail":"Server error"}"#)), .server(500, "Server error"))
         XCTAssertEqual(ElevenLabsError.from(URLError(.timedOut)) as? ElevenLabsError, .offline)
         XCTAssertEqual(ElevenLabsError.from(URLError(.notConnectedToInternet)) as? ElevenLabsError, .offline)

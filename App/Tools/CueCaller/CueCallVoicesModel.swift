@@ -71,6 +71,9 @@ final class CueCallVoicesModel {
     /// DEBUG screenshots: hold the seeded state, no network.
     @ObservationIgnored private var frozen = false
 
+    /// Free ElevenLabs accounts can't use library voices through the API (built-in voices only).
+    var isFreePlan = false
+
     func refreshStatus() {
         if frozen { return }
         guard hasKey else { connection = .noKey; return }
@@ -78,6 +81,7 @@ final class CueCallVoicesModel {
         Task {
             do {
                 let s = try await client.subscription()
+                isFreePlan = (s.tier ?? "").lowercased() == "free"
                 connection = .connected(charactersLeft: s.charactersLeft)
             } catch {
                 connection = .failed(Self.message(error))

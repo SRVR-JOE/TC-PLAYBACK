@@ -229,6 +229,9 @@ struct ElevenLabsVoiceBrowser: View {
     }
 
     private var footer: String {
+        if voices.isFreePlan {
+            return "These voices are from the ElevenLabs library. On a free ElevenLabs account they can only be previewed here; calls need a paid plan. The built-in ElevenLabs voices work on any plan."
+        }
         let tag = language.lowercased()
         if tag == "de-ch" {
             return "Swiss voices speak Standard German with a Swiss accent, the way Swiss crews hear calls."

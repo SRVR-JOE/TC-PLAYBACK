@@ -127,6 +127,8 @@ enum ElevenLabsError: LocalizedError, Equatable {
     case noKey
     case unauthorized
     case quotaExceeded
+    /// Free accounts can only use the built-in voices through the API; library voices need a paid plan.
+    case paidPlanRequired
     case rateLimited
     case offline
     case voiceNotFound
@@ -138,6 +140,7 @@ enum ElevenLabsError: LocalizedError, Equatable {
         case .noKey: "No ElevenLabs key on this iPad."
         case .unauthorized: "ElevenLabs didn’t accept the key. Check it and enter it again."
         case .quotaExceeded: "This month’s ElevenLabs characters are used up."
+        case .paidPlanRequired: "This voice is from the ElevenLabs library, which needs a paid ElevenLabs plan. Pick a built-in voice, or upgrade the account."
         case .rateLimited: "ElevenLabs is busy. Try again in a moment."
         case .offline: "No network connection."
         case .voiceNotFound: "That voice isn’t in the ElevenLabs account."
@@ -151,6 +154,7 @@ enum ElevenLabsError: LocalizedError, Equatable {
     static func from(status: Int, body: Data) -> ElevenLabsError {
         let (code, message) = detail(body)
         let c = code.lowercased()
+        if c.contains("paid_plan") || c.contains("payment_required") { return .paidPlanRequired }
         if c.contains("quota") || c.contains("credits") || status == 402 { return .quotaExceeded }
         switch status {
         case 401, 403: return .unauthorized
@@ -177,7 +181,8 @@ enum ElevenLabsError: LocalizedError, Equatable {
     private static func detail(_ body: Data) -> (String, String) {
         guard let obj = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return ("", "") }
         if let d = obj["detail"] as? [String: Any] {
-            return ((d["status"] as? String) ?? (d["code"] as? String) ?? "", (d["message"] as? String) ?? "")
+            let tags = [d["status"], d["code"], d["type"]].compactMap { $0 as? String }.joined(separator: " ")
+            return (tags, (d["message"] as? String) ?? "")
         }
         if let d = obj["detail"] as? String { return ("", d) }
         if let list = obj["detail"] as? [[String: Any]], let m = list.first?["msg"] as? String { return ("", m) }
