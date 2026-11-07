@@ -167,29 +167,48 @@ enum CuePointExport {
 
     static func disguiseFileName(trackName: String) -> String { "\(safe(trackName))_cue_table.txt" }
 
-    /// grandMA3 timecode show with one marker track. Import with
+    /// grandMA3 timecode show that FIRES cues: a Marker track (visual only) plus one Track per cue
+    /// type, targeting that type's sequence, with a `Goto` command event per point.
+    ///
+    /// Structure mirrors real/console-validated exports (see CuePointExport+More.swift for sources):
+    /// `Timecode > TrackGroup > Track(Target) > TimeRange > CmdSubTrack > CmdEvent > RealtimeCmd`.
+    /// Event `Time` is written in seconds (as MA writes it in XML; MA's internal RawTime is
+    /// seconds x 2^24, see `ma3RawTime`). The console resolves Targets and `CueDestination` by NAME, so
+    /// sequences must be named after the cue type and cues after the point; the cue-list macro
+    /// (`grandMA3CueListMacro`) builds exactly that. Import with
     /// `Import Timecode <slot> "<file>"` from gma3_library/datapools/timecodes. Times are seconds
-    /// from the track start; set the timecode object's offset to the start TC shown in the name.
-    static func grandMA3Timecode(trackName: String, rows: [CuePointRow], clock: CuePointClock, duration: TimeInterval) -> String {
-        func esc(_ s: String) -> String {
-            s.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
-                .replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "\"", with: "&quot;")
-                .replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
-        }
+    /// from the track start; set the timecode object's offset/slot to the start TC.
+    static func grandMA3Timecode(trackName: String, rows: [CuePointRow], clock: CuePointClock, duration: TimeInterval,
+                                 types: [CuePointType] = []) -> String {
+        let esc = ma3Escape
         func t(_ v: TimeInterval) -> String { String(format: "%.2f", max(0, v)) }
+        func t3(_ v: TimeInterval) -> String { String(format: "%.3f", max(0, v)) }
         var x = """
         <?xml version="1.0" encoding="UTF-8"?>
-        <GMA3 DataVersion="2.0.0.0">
+        <GMA3 DataVersion="\(ma3DataVersion)">
         \t<Timecode Name="\(esc(trackName))" Guid="\(guid())" Duration="\(t(duration))" LoopCount="0" TCSlot="-1" AutoStop="No" SwitchOff="Keep Playbacks" Goto="as Go">
         \t\t<TrackGroup Play="" Rec="">
         \t\t\t<MarkerTrack Name="Marker" Guid="\(guid())">
 
         """
-        for r in rows.sorted(by: { $0.time < $1.time }) {
+        let sorted = rows.sorted(by: { $0.time < $1.time })
+        for r in sorted {
             x += "\t\t\t\t<Marker Name=\"\(esc("\(r.number) \(r.name)"))\" Guid=\"\(guid())\" Time=\"\(t(r.time))\" />\n"
         }
+        x += "\t\t\t</MarkerTrack>\n"
+        for g in ma3Groups(rows: sorted, types: types) {
+            let idx = max(0, g.sequence - 1)
+            x += "\t\t\t<Track Name=\"\(esc(g.sequenceName))\" Guid=\"\(guid())\" Play=\"\" Rec=\"\" Target=\"ShowData.DataPools.Default.Sequences.\(esc(g.sequenceName))\">\n"
+            x += "\t\t\t\t<TimeRange Guid=\"\(guid())\" Duration=\"To End\" Play=\"\" Rec=\"\" Start=\"0.000\">\n"
+            x += "\t\t\t\t\t<CmdSubTrack>\n"
+            for c in g.cues {
+                x += "\t\t\t\t\t\t<CmdEvent Name=\"Goto\" Time=\"\(t3(c.row.time))\" CueDestination=\"\(esc(c.label))\">\n"
+                x += "\t\t\t\t\t\t\t<RealtimeCmd Type=\"Key\" Source=\"Original\" UserProfile=\"0\" Environment=\"0\" User=\"1\" Status=\"On\" IsRealtime=\"1\" IsXFade=\"0\" IgnoreFollow=\"0\" IgnoreCommand=\"0\" Assert=\"0\" IgnoreNetwork=\"0\" FromTriggerNode=\"0\" IgnoreExecTime=\"0\" IssuedByTimecode=\"0\" FromLocalHardwareFader=\"1\" IgnoreExecXFade=\"0\" IsExecXFade=\"0\" Object=\"13.13.0.5.\(idx)\" ExecToken=\"Goto\" ValCueDestination=\"0.5.\(idx).\(c.cueThousandths)\" />\n"
+                x += "\t\t\t\t\t\t</CmdEvent>\n"
+            }
+            x += "\t\t\t\t\t</CmdSubTrack>\n\t\t\t\t</TimeRange>\n\t\t\t</Track>\n"
+        }
         x += """
-        \t\t\t</MarkerTrack>
         \t\t</TrackGroup>
         \t</Timecode>
         </GMA3>
