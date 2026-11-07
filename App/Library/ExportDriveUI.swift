@@ -6,6 +6,8 @@ struct ExportDriveItem: Identifiable {
     let id: String
     let title: String
     var detail: String = ""
+    /// Folder inside the drive folder, e.g. "objects/table" for disguise cue tables.
+    var subfolder: String? = nil
     /// Builds the files to copy (called on tap).
     let files: () throws -> [URL]
 }
@@ -17,10 +19,13 @@ extension ExportDrive {
     /// Copies an item's files and reports the result in the feedback strip.
     func save(_ item: ExportDriveItem) {
         do {
-            let names = try save(try item.files())
+            let files = try item.files()
+            guard !files.isEmpty else { feedback = .init(ok: false, text: "Nothing to save yet."); return }
+            let names = try save(files, subfolder: item.subfolder)
+            let place = item.subfolder.map { "\(name) › \($0.replacingOccurrences(of: "/", with: " › "))" } ?? name
             feedback = .init(ok: true, text: names.count == 1
-                             ? "Saved \(names[0]) to \(name)"
-                             : "Saved \(names.count) files to \(name)")
+                             ? "Saved \(names[0]) to \(place)"
+                             : "Saved \(names.count) files to \(place)")
         } catch {
             feedback = .init(ok: false, text: error.localizedDescription)
         }

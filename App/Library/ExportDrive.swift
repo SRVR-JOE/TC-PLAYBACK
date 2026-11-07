@@ -80,7 +80,7 @@ final class ExportDrive {
     /// Copies `files` into the drive folder, replacing files with the same name. Returns the names
     /// written.
     @discardableResult
-    func save(_ files: [URL]) throws -> [String] {
+    func save(_ files: [URL], subfolder: String? = nil) throws -> [String] {
         guard let folder = resolve() else {
             refresh()
             throw ExportDriveError.notConnected(name)
@@ -94,8 +94,13 @@ final class ExportDrive {
         var written: [String] = []
         var coordError: NSError?
         var writeError: Error?
-        NSFileCoordinator().coordinate(writingItemAt: folder, options: [], error: &coordError) { dir in
+        NSFileCoordinator().coordinate(writingItemAt: folder, options: [], error: &coordError) { root in
             do {
+                var dir = root
+                if let subfolder, !subfolder.isEmpty {
+                    dir = root.appending(path: subfolder, directoryHint: .isDirectory)
+                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                }
                 for src in files {
                     let dest = dir.appendingPathComponent(src.lastPathComponent)
                     if FileManager.default.fileExists(atPath: dest.path) { try FileManager.default.removeItem(at: dest) }

@@ -69,4 +69,12 @@ final class ExportDriveTests: XCTestCase {
         drive.forget()
         XCTAssertEqual(drive.state, .notChosen)
     }
+
+    func testSubfolderIsCreated() throws {
+        let drive = ExportDrive(defaults: defaults)
+        try drive.choose(root)
+        let u = try file("Song_cue_table.txt", "t")
+        try drive.save([u], subfolder: CueTableExport.disguiseFolder)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appending(path: "objects/table/Song_cue_table.txt").path))
+    }
 }

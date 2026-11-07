@@ -845,7 +845,9 @@ struct CuePointsView: View {
             }
             ExportDriveMenuSection(groups: Self.exportGroups.map { g in
                 (title: g.title, items: exports.filter { g.formats.contains($0.format) }.map { f in
-                    ExportDriveItem(id: f.format.rawValue, title: f.title, detail: f.detail, files: { f.urls })
+                    ExportDriveItem(id: f.format.rawValue, title: f.title, detail: f.detail,
+                                    subfolder: CueTableExport.isDisguise(f.format) ? CueTableExport.disguiseFolder : nil,
+                                    files: { f.urls })
                 })
             })
             Section("disguise options") {
