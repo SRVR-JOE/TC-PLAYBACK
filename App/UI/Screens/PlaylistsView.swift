@@ -59,6 +59,25 @@ struct PlaylistsView: View {
                             ShareLink(item: ShowExport(playlist: p), preview: SharePreview(p.name)) {
                                 Label("Export show file…", systemImage: "square.and.arrow.up")
                             }
+                            if ExportDrive.shared.isReady {
+                                Button {
+                                    ExportDrive.shared.save(ExportDriveItem(id: "disguise", title: p.name, subfolder: CueTableExport.disguiseFolder) {
+                                        try CueTableExport.disguiseTables(for: p, context: context)
+                                    })
+                                } label: {
+                                    Label { Text("Save disguise cue tables to \(ExportDrive.shared.name)"); Text("Every track with marks, into objects › table") } icon: {
+                                        Image(systemName: "externaldrive")
+                                    }
+                                }
+                                Button {
+                                    ExportDrive.shared.save(ExportDriveItem(id: "show", title: p.name) { [try PlaylistEditor.exportShow(p)] })
+                                } label: { Label("Save show file to \(ExportDrive.shared.name)", systemImage: "externaldrive") }
+                            } else {
+                                Button { ExportDrive.shared.requestPicker() } label: {
+                                    Label(ExportDrive.shared.hasChoice ? "\(ExportDrive.shared.name) isn’t plugged in – choose drive…" : "Choose USB drive…",
+                                          systemImage: "externaldrive.badge.plus")
+                                }
+                            }
                             if !showLock {
                                 Divider()
                                 Button(role: .destructive) { confirmDelete = p } label: { Label("Delete", systemImage: "trash") }
@@ -83,6 +102,8 @@ struct PlaylistsView: View {
                     .disabled(showLock)
                 }
             }
+            .exportDriveSupport()
+            .onAppear { ExportDrive.shared.refresh() }
             .fileImporter(isPresented: $importingShow, allowedContentTypes: ShowFileTypes.importable) { result in
                 if case .success(let url) = result {
                     Task { await shell.importShow(url, context: context); dismiss() }

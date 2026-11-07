@@ -196,6 +196,7 @@ struct CuePointsView: View {
         }
         .onChange(of: track?.id) { _, _ in open() }
         .onChange(of: store.types) { _, _ in rebuildExports() }
+        .exportDriveSupport() // Save to USB: folder picker + saved/failed strip
         .sheet(isPresented: $showTypes, onDismiss: reload) {
             CuePointTypesSheet(store: store, counts: typeCounts, onRenumber: renumber)
         }
@@ -867,6 +868,13 @@ struct CuePointsView: View {
                     }
                 }
             }
+            ExportDriveMenuSection(groups: Self.exportGroups.map { g in
+                (title: g.title, items: exports.filter { g.formats.contains($0.format) }.map { f in
+                    ExportDriveItem(id: f.format.rawValue, title: f.title, detail: f.detail,
+                                    subfolder: CueTableExport.isDisguise(f.format) ? CueTableExport.disguiseFolder : nil,
+                                    files: { f.urls })
+                })
+            })
             Section("disguise options") {
                 Toggle("TC tag at track start", isOn: $options.tcTagAtStart)
                 Toggle("Tag points as CUE numbers", isOn: $options.cueTags)
@@ -1311,6 +1319,7 @@ struct CuePointsView: View {
     }
 
     private func rebuildExports() {
+        ExportDrive.shared.refresh()
         guard let track, !points.isEmpty else { exports = []; return }
         let rows = CuePointRow.rows(for: points, index: index)
         // Single-table formats mix every type in one list, so number them across the whole track;
