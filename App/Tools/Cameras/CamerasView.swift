@@ -10,6 +10,7 @@ struct CamerasPage: View {
     @State private var isNew = false
     @State private var reading: Int?
     @State private var showShots = false
+    @State private var showShotLibrary = false
     @State private var pdfURL: URL?
     private var store: CameraBriefStore { .shared }
 
@@ -39,6 +40,8 @@ struct CamerasPage: View {
         .background(Theme.background)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                Button("Shots") { showShotLibrary = true }
+                    .accessibilityHint("Shot reference: each shot's name, meaning and picture")
                 Button("Brief") { reading = 0 }
                     .disabled(brief.cameras.isEmpty)
                     .accessibilityHint("Big type, one camera per screen, to show an operator")
@@ -62,6 +65,7 @@ struct CamerasPage: View {
                             onSave: { save($0) }, onDelete: { delete($0) })
         }
         .sheet(isPresented: $showShots) { CueShotKeysSheet() }
+        .sheet(isPresented: $showShotLibrary) { ShotLibrarySheet() }
         .fullScreenCover(item: Binding(get: { reading.map(ReadStart.init) }, set: { reading = $0?.index })) { start in
             CameraBriefReader(cameras: brief.cameras, showName: showName, start: start.index)
         }
@@ -76,6 +80,8 @@ struct CamerasPage: View {
             switch a[i + 1] {
             case "brief": reading = 0
             case "edit": isNew = false; editing = brief.cameras.first
+            case "shots": showShotLibrary = true
+            case "directions": isNew = false; editing = brief.cameras.first
             default: break
             }
         }
@@ -220,6 +226,7 @@ struct CameraEditSheet: View {
     var onSave: (BriefCamera) -> Void
     var onDelete: (BriefCamera) -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var picking: CameraDirectionPicker.Mode?
 
     var body: some View {
         NavigationStack {
@@ -246,7 +253,14 @@ struct CameraEditSheet: View {
                     TextField("What this camera is for, who it follows, how tight", text: $camera.mission, axis: .vertical)
                         .lineLimit(4...12)
                         .font(.system(size: 17))
-                } header: { Text("Mission") }
+                    HStack(spacing: 20) {
+                        Button { picking = .directions } label: { Label("Add directions…", systemImage: "text.badge.plus") }
+                        Button { picking = .keywords } label: { Label("Keywords…", systemImage: "character.book.closed") }
+                    }
+                    .buttonStyle(.borderless)
+                } header: { Text("Mission") } footer: {
+                    Text("Ready-made directions fill in the subject. Keywords are the standard shot, angle and move names.")
+                }
                 .listRowBackground(Theme.surface)
                 Section {
                     Picker("Type", selection: $camera.kind) {
@@ -283,6 +297,20 @@ struct CameraEditSheet: View {
             }
             .scrollContentBackground(.hidden)
             .background(Theme.background)
+            .sheet(item: $picking) { mode in
+                CameraDirectionPicker(subject: camera.subject, mode: mode) { ins in
+                    switch ins {
+                    case .line(let l): camera.mission = CameraDirections.append(l, to: camera.mission)
+                    case .keyword(let k): camera.mission = CameraDirections.appendKeyword(k, to: camera.mission)
+                    }
+                }
+            }
+            #if DEBUG
+            .task {
+                guard ProcessInfo.processInfo.arguments.contains("directions") else { return }
+                try? await Task.sleep(for: .milliseconds(600)); picking = .directions
+            }
+            #endif
             .navigationTitle(isNew ? "New camera" : camera.callName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -367,6 +395,7 @@ struct CameraBriefReader: View {
 struct CueShotKeysSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var newShot = ""
+    @State private var pickingKeywords = false
     private var store: CueCameraPresetStore { .shared }
 
     var body: some View {
@@ -385,12 +414,18 @@ struct CueShotKeysSheet: View {
                     Text("A shot is added to the current call: Camera 3, then Push in, makes “Camera 3, push in”.")
                 }
                 Section {
+                    Button("Add from the keyword list…") { pickingKeywords = true }.listRowBackground(Theme.surface)
                     Button("Restore the original shots") { store.resetShots() }.listRowBackground(Theme.surface)
                 }
             }
             .environment(\.editMode, .constant(.active))
             .scrollContentBackground(.hidden)
             .background(Theme.background)
+            .sheet(isPresented: $pickingKeywords) {
+                CameraDirectionPicker(mode: .keywords, keywordsOnly: true, title: "Add shot keys") { ins in
+                    if case .keyword(let k) = ins { store.addShot(k) }
+                }
+            }
             .navigationTitle("Shot keys")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
